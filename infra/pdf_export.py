@@ -21,17 +21,19 @@ body {
   padding: 28px 20px 40px;
   font-size: 14px;
 }
-h1, h2, h3, h4 { color: #111827; margin-top: 1.4em; margin-bottom: 0.5em; }
-h1 { font-size: 2rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em; }
-h2 { font-size: 1.4rem; }
+h1, h2, h3, h4 { color: #111827; margin-top: 1.4em; margin-bottom: 0.5em; font-weight: 700; }
+h1 { font-size: 2rem; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em; letter-spacing: -0.02em; }
+h2 { font-size: 1.4rem; border-left: 4px solid #dbeafe; padding-left: 0.6rem; }
 h3 { font-size: 1.1rem; }
 p, li { color: #1f2937; }
 ul { padding-left: 1.3rem; }
+hr { border: 0; border-top: 1px solid #e5e7eb; margin: 1.6rem 0; }
 table {
   width: 100%;
   border-collapse: collapse;
   margin: 1rem 0 1.4rem;
   font-size: 13px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 th, td {
   border: 1px solid #e5e7eb;
@@ -39,6 +41,7 @@ th, td {
   vertical-align: top;
 }
 th { background: #f8fafc; font-weight: 600; }
+tr:nth-child(even) td { background: #fcfcfd; }
 code { background: #f3f4f6; padding: 0.15rem 0.35rem; border-radius: 4px; }
 blockquote {
   border-left: 3px solid #d1d5db;
@@ -47,12 +50,21 @@ blockquote {
   color: #4b5563;
 }
 .page-break { page-break-before: always; }
+.cover-kicker {
+  color: #2563eb;
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
 """
 
 
 def build_combined_markdown(*, user_query: str, summary_content: str, report_history: list[dict[str, Any]]) -> str:
     parts = [
         "# Robotics Startup Investment Report",
+        "",
+        '<div class="cover-kicker">Robotics Investment Report</div>',
         "",
         f"- 질의: {user_query}",
         "",

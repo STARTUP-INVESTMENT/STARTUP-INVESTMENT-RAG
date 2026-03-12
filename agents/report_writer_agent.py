@@ -4,9 +4,10 @@ from datetime import date
 import re
 from urllib.parse import urlparse
 
-from core.agent_utils import json_response, string_list
+from core.agent_utils import string_list
 from core.prompt_loader import load_prompt
 from core.state import InvestmentState
+from agents.startup_search_agent import build_openai_client
 
 
 REPORT_DATE = date(2026, 3, 12)
@@ -20,24 +21,6 @@ SCORECARD_LABELS = {
     "safety_regulation": "안전 인증 & 규제",
     "business_model": "수익 모델 지속성",
 }
-SCORECARD_WEIGHTS = {
-    "team_founders": 0.20,
-    "market_opportunity": 0.20,
-    "technology_production": 0.30,
-    "competition_moat": 0.10,
-    "customer_roi_traction": 0.10,
-    "safety_regulation": 0.05,
-    "business_model": 0.05,
-}
-
-
-def _as_list(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if value is None:
-        return []
-    text = str(value).strip()
-    return [text] if text else []
 
 
 def _as_text(value: object, default: str = "미기재") -> str:
@@ -45,34 +28,6 @@ def _as_text(value: object, default: str = "미기재") -> str:
         return default
     text = str(value).strip()
     return text or default
-
-
-def _bullets(items: list[str], empty: str = "미기재") -> list[str]:
-    if not items:
-        return [f"- {empty}"]
-    return [f"- {item}" for item in items]
-
-
-def _company_overview_lines(basic_info: dict[str, object]) -> list[str]:
-    return [
-        f"- 회사명: {_as_text(basic_info.get('name'))}",
-        f"- 국가/지역: {_as_text(basic_info.get('country') or basic_info.get('location') or basic_info.get('region'))}",
-        f"- 단계: {_as_text(basic_info.get('funding_round') or basic_info.get('investment_stage') or basic_info.get('stage'))}",
-        f"- 핵심 제품: {_as_text(basic_info.get('core_product') or basic_info.get('product_name') or basic_info.get('product') or basic_info.get('description'))}",
-    ]
-
-
-def _scorecard_table(scorecard: dict[str, float], final_score: float) -> list[str]:
-    lines = [
-        "| 평가 항목 | 점수 | 가중치 | 가중 점수 |",
-        "| --- | ---: | ---: | ---: |",
-    ]
-    for key, label in SCORECARD_LABELS.items():
-        score = float(scorecard.get(key, 0.0))
-        weight = SCORECARD_WEIGHTS[key]
-        lines.append(f"| {label} | {score:.2f} | {int(weight * 100)}% | {(score * weight):.2f} |")
-    lines.append(f"| 총점 |  | 100% | {final_score:.2f} |")
-    return lines
 
 
 def _source_kind(url: str, title: str) -> str:
@@ -105,63 +60,75 @@ def _org_name(url: str, title: str) -> str:
     return token or "출처 미상"
 
 
-def _reference_line(source: dict[str, object]) -> tuple[str, str]:
+def _reference_line(source: dict[str, object]) -> str:
     title = _as_text(source.get("title"), "제목 미상")
     url = _as_text(source.get("url"), "")
     source_type = _source_kind(url, title)
     year = _extract_year(f"{title} {url}")
     org = _org_name(url, title)
     if source_type == "report":
-        line = f"- {org}({year}). *{title}*. {url}"
-        return "기관 보고서", line
+        return f"- {org}({year}). *{title}*. {url}"
     if source_type == "paper":
-        line = f"- {org}({year}). {title}. *학술지명 미상*, 권(호) 미상, 페이지 미상."
-        return "학술 논문", line
-    line = f"- {org}({year if year != '연도 미상' else REPORT_DATE.isoformat()}). *{title}*. {_site_name(url)}, {url}"
-    return "웹페이지", line
+        return f"- {org}({year}). {title}. *학술지명 미상*, 권(호) 미상, 페이지 미상."
+    return f"- {org}({year if year != '연도 미상' else REPORT_DATE.isoformat()}). *{title}*. {_site_name(url)}, {url}"
 
 
-def _reference_sections(sources: list[dict[str, object]]) -> list[str]:
-    unique: list[dict[str, object]] = []
+def _reference_payload(sources: list[dict[str, object]]) -> dict[str, list[str]]:
+    buckets = {"기관 보고서": [], "학술 논문": [], "웹페이지": []}
     seen: set[tuple[str, str]] = set()
     for source in sources:
         key = (str(source.get("title", "")), str(source.get("url", "")))
         if key in seen:
             continue
         seen.add(key)
-        unique.append(source)
-
-    buckets = {"기관 보고서": [], "학술 논문": [], "웹페이지": []}
-    for source in unique:
-        bucket, line = _reference_line(source)
-        buckets[bucket].append(line)
-
-    lines = ["## REFERENCE", ""]
-    for bucket in ["기관 보고서", "학술 논문", "웹페이지"]:
-        lines.append(bucket)
-        if buckets[bucket]:
-            lines.extend(buckets[bucket])
+        kind = _source_kind(str(source.get("url", "")), str(source.get("title", "")))
+        if kind == "report":
+            buckets["기관 보고서"].append(_reference_line(source))
+        elif kind == "paper":
+            buckets["학술 논문"].append(_reference_line(source))
         else:
-            lines.append("- 해당 없음")
-        lines.append("")
-    return lines[:-1]
+            buckets["웹페이지"].append(_reference_line(source))
+    return buckets
 
 
-def _company_references(state: InvestmentState) -> list[dict[str, object]]:
-    return [
-        *state.get("tech_research_sources", []),
-        *state.get("market_research_sources", []),
-        *state.get("competitor_research_sources", []),
-    ]
+def _scorecard_rows(scorecard: dict[str, float], final_score: float) -> list[dict[str, object]]:
+    rows = []
+    for key, label in SCORECARD_LABELS.items():
+        score = float(scorecard.get(key, 0.0))
+        weight = {"team_founders": 20, "market_opportunity": 20, "technology_production": 30, "competition_moat": 10, "customer_roi_traction": 10, "safety_regulation": 5, "business_model": 5}[key]
+        rows.append({"label": label, "score": round(score, 2), "weight_percent": weight, "weighted_score": round(score * weight / 100, 2)})
+    rows.append({"label": "총점", "score": "", "weight_percent": 100, "weighted_score": round(final_score, 2)})
+    return rows
 
 
-def _llm_company_sections(state: InvestmentState) -> dict[str, object]:
-    basic_info = state.get("startup_basic_info", {})
-    payload = json_response(
-        load_prompt("report_writer_ko.txt"),
+def _company_payload(item: dict[str, object]) -> dict[str, object]:
+    return {
+        "startup_name": item.get("startup_name", ""),
+        "decision": DECISION_LABELS.get(str(item.get("decision", "hold")), "보류"),
+        "final_score": item.get("final_score", 0.0),
+        "startup_basic_info": item.get("startup_basic_info", {}),
+        "team_assessment": item.get("team_assessment", {}),
+        "tech_assessment": item.get("tech_assessment", {}),
+        "market_assessment": item.get("market_assessment", {}),
+        "roi_traction_assessment": item.get("roi_traction_assessment", {}),
+        "business_model_assessment": item.get("business_model_assessment", {}),
+        "safety_assessment": item.get("safety_assessment", {}),
+        "competitor_assessment": item.get("competitor_assessment", {}),
+        "decision_reason": item.get("decision_reason", ""),
+        "scorecard_rows": _scorecard_rows(item.get("scorecard", {}), float(item.get("final_score", 0.0) or 0.0)),
+        "references": _reference_payload(item.get("references", [])),
+    }
+
+
+def _collect_company_result(state: InvestmentState) -> InvestmentState:
+    report_history = [*state.get("report_history", [])]
+    report_history.append(
         {
             "startup_name": state.get("startup_name", ""),
-            "startup_basic_info": basic_info,
+            "decision": state.get("investment_decision", "hold"),
+            "final_score": state.get("final_score", 0.0),
+            "decision_reason": state.get("decision_reason", ""),
+            "startup_basic_info": state.get("startup_basic_info", {}),
             "team_assessment": state.get("team_assessment", {}),
             "tech_assessment": state.get("tech_assessment", {}),
             "market_assessment": state.get("market_assessment", {}),
@@ -169,108 +136,41 @@ def _llm_company_sections(state: InvestmentState) -> dict[str, object]:
             "business_model_assessment": state.get("business_model_assessment", {}),
             "safety_assessment": state.get("safety_assessment", {}),
             "competitor_assessment": state.get("competitor_assessment", {}),
-            "decision": state.get("investment_decision", "hold"),
-            "decision_reason": state.get("decision_reason", ""),
-            "final_score": state.get("final_score", 0.0),
-        },
-    )
-    return {
-        "summary_short_ko": _as_text(payload.get("summary_short_ko"), "핵심 요약 미기재"),
-        "decision_label_ko": _as_text(payload.get("decision_label_ko"), DECISION_LABELS.get(str(state.get("investment_decision", "hold")), "보류")),
-        "decision_reason_ko": _as_text(payload.get("decision_reason_ko"), _as_text(state.get("decision_reason"))),
-        "business_idea_ko": string_list(payload.get("business_idea_ko", [])),
-        "business_risks_ko": string_list(payload.get("business_risks_ko", [])),
-        "market_size_ko": string_list(payload.get("market_size_ko", [])),
-        "team_composition_ko": string_list(payload.get("team_composition_ko", [])),
-        "limitations_ko": string_list(payload.get("limitations_ko", [])),
-    }
-
-
-def _company_report(state: InvestmentState, llm_sections: dict[str, object]) -> str:
-    basic_info = state.get("startup_basic_info", {})
-    tech = state.get("tech_assessment", {})
-    scorecard = state.get("scorecard", {})
-    references = _company_references(state)
-
-    lines = [
-        f"# {state.get('startup_name', '')}",
-        "",
-        "## 기업 분석",
-        *_company_overview_lines(basic_info),
-        "",
-        "### 사업 아이디어",
-        *_bullets(_as_list(llm_sections.get("business_idea_ko"))),
-        "",
-        "### 사업 리스크",
-        *_bullets(_as_list(llm_sections.get("business_risks_ko"))),
-        "",
-        "### 시장 규모",
-        *_bullets(_as_list(llm_sections.get("market_size_ko"))),
-        "",
-        "### 팀의 구성",
-        *_bullets(_as_list(llm_sections.get("team_composition_ko"))),
-        "",
-        "### 한계점",
-        *_bullets(_as_list(llm_sections.get("limitations_ko"))),
-        "",
-        "### 투자 판단",
-        f"- 결론: {_as_text(llm_sections.get('decision_label_ko'), DECISION_LABELS.get(str(state.get('investment_decision', 'hold')), '보류'))}",
-        f"- 최종 점수: {float(state.get('final_score', 0.0)):.2f} / 5.00",
-        f"- TRL: {_as_text(tech.get('trl_estimate'))}",
-        f"- 판단 근거: {_as_text(llm_sections.get('decision_reason_ko'), _as_text(state.get('decision_reason')))}",
-        "",
-        "### 스코어카드",
-        *_scorecard_table(scorecard, float(state.get("final_score", 0.0))),
-        "",
-        *_reference_sections(references),
-    ]
-    return "\n".join(lines)
-
-
-def _summary_markdown(report_history: list[dict[str, object]]) -> str:
-    sorted_items = sorted(report_history, key=lambda item: float(item.get("final_score", 0.0)), reverse=True)
-    top_lines = [
-        f"- {item['startup_name']}: {DECISION_LABELS.get(str(item.get('decision', 'hold')), '보류')} ({float(item.get('final_score', 0.0)):.2f}) - {_as_text(item.get('summary'), '핵심 근거 미기재')}"
-        for item in sorted_items[:3]
-    ]
-    risk_summary = [
-        "- 공통적으로 ROI 정량 근거와 시장 규모 근거가 약한 기업이 많았음",
-        "- 기술 성숙도는 일부 기업에서 높았으나 규제·안전 인증 정보는 전반적으로 부족했음",
-        "- 투자 추천은 기술 검증과 사업화 근거가 동시에 확보된 기업에 한정됨",
-    ]
-    lines = [
-        "# SUMMARY",
-        "",
-        f"- 전체 평가 기업 수: {len(report_history)}",
-        f"- 투자 추천 수: {sum(1 for item in report_history if item.get('decision') == 'invest')}",
-        f"- 보류 수: {sum(1 for item in report_history if item.get('decision') != 'invest')}",
-        "",
-        "## 핵심 요약",
-        *top_lines,
-        "",
-        "## 공통 시사점",
-        *risk_summary,
-    ]
-    return "\n".join(lines)
-
-
-def report_writer_node(state: InvestmentState) -> InvestmentState:
-    startup_name = state["startup_name"]
-    llm_sections = _llm_company_sections(state)
-    company_report = _company_report(state, llm_sections)
-    report_history = [*state.get("report_history", [])]
-    report_history.append(
-        {
-            "startup_name": startup_name,
-            "decision": state.get("investment_decision", "hold"),
-            "decision_label": DECISION_LABELS.get(str(state.get("investment_decision", "hold")), "보류"),
-            "final_score": state.get("final_score", 0.0),
-            "summary": llm_sections.get("summary_short_ko", _as_text(state.get("decision_reason"))),
-            "report_content": company_report,
+            "scorecard": state.get("scorecard", {}),
+            "references": [
+                *state.get("tech_research_sources", []),
+                *state.get("market_research_sources", []),
+                *state.get("competitor_research_sources", []),
+            ],
         }
     )
     return {
-        "report_content": _summary_markdown(report_history),
         "report_history": report_history,
-        "evaluated_startups": [*state.get("evaluated_startups", []), startup_name],
+        "evaluated_startups": [*state.get("evaluated_startups", []), state.get("startup_name", "")],
     }
+
+
+def _generate_final_markdown(report_history: list[dict[str, object]]) -> str:
+    client = build_openai_client()
+    payload = {
+        "companies": [_company_payload(item) for item in report_history],
+        "report_date": REPORT_DATE.isoformat(),
+    }
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        input=[
+            {"role": "system", "content": load_prompt("report_writer_ko.txt")},
+            {"role": "user", "content": str(payload)},
+        ],
+    )
+    return response.output_text.strip()
+
+
+def report_writer_node(state: InvestmentState) -> InvestmentState:
+    report_history = [*state.get("report_history", [])]
+    final_markdown = _generate_final_markdown(report_history)
+    return {"report_content": final_markdown}
+
+
+def collect_company_result_node(state: InvestmentState) -> InvestmentState:
+    return _collect_company_result(state)
