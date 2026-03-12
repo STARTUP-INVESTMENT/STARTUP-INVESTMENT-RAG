@@ -24,6 +24,7 @@ class InvestmentState(TypedDict, total=False):
     trl_level: int
     tech_summary: str
     tech_assessment: dict[str, Any]
+    market_context: str
     market_evaluation: str
     market_assessment: dict[str, Any]
     competitor_analysis: str

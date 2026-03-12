@@ -4,22 +4,21 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import urlparse
+
+from langchain_teddynote.tools.tavily import TavilySearch
 
 from .agent_utils import current_candidate
-from .startup_search_agent import _http_text, fetch_innoforest_company_profile
+from .startup_search_agent import _http_text, fetch_innoforest_company_profile, load_env_file
 from .state import InvestmentState
 
 
 DEFAULT_RESEARCH_CACHE_DIR = Path(".cache/company_research")
-MAX_SEARCH_RESULTS = 3
 MAX_EXCERPT_CHARS = 2000
-SEARCH_RESULT_PATTERNS = (
-    "site:{domain}",
-    "{name} robotics",
-    "{name} humanoid robot",
-    "{name} founder technology",
-    "{name} github",
+TAVILY_MAX_RESULTS = 3
+SEARCH_QUERIES = (
+    "{name} robotics startup",
+    "{name} founder technology investment",
 )
 
 
@@ -60,75 +59,46 @@ def _unique_by_url(snippets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return deduped
 
 
-def _extract_links(html: str) -> list[tuple[str, str]]:
-    matches = re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', html, flags=re.IGNORECASE | re.DOTALL)
-    links: list[tuple[str, str]] = []
-    for href, raw_title in matches:
-        title = _clean_html_text(raw_title)
-        if title:
-            links.append((href, title))
-    return links
-
-
-def _extract_bing_links(html: str) -> list[tuple[str, str]]:
-    matches = re.findall(r'<li class="b_algo".*?<h2><a href="(https?://[^"]+)"[^>]*>(.*?)</a>', html, flags=re.IGNORECASE | re.DOTALL)
-    links: list[tuple[str, str]] = []
-    for href, raw_title in matches:
-        title = _clean_html_text(raw_title)
-        if title:
-            links.append((href, title))
-    return links
-
-
-def _search_urls(candidate: dict[str, Any]) -> list[tuple[str, str, str]]:
+def _tavily_search_snippets(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    load_env_file(Path.cwd() / ".env")
+    tavily_tool = TavilySearch()
     name = str(candidate.get("name", "")).strip()
-    homepage = str(candidate.get("url", "")).strip()
-    domain = urlparse(homepage).netloc.replace("www.", "") if homepage else ""
-    queries = []
-    for pattern in SEARCH_RESULT_PATTERNS:
-        if "{domain}" in pattern and not domain:
-            continue
-        queries.append(pattern.format(name=name, domain=domain))
-
-    results: list[tuple[str, str, str]] = []
-    for query in queries:
+    snippets: list[dict[str, Any]] = []
+    for query_pattern in SEARCH_QUERIES:
+        query = query_pattern.format(name=name)
         try:
-            search_html = _http_text(f"https://duckduckgo.com/html/?q={quote_plus(query)}", timeout=15)
-            for href, title in _extract_links(search_html):
-                parsed = urlparse(href)
-                if parsed.scheme not in {"http", "https"}:
-                    continue
-                if "duckduckgo.com" in parsed.netloc:
-                    continue
-                if any(blocked in href for blocked in ["/news.ycombinator.com", "/linkedin.com/"]):
-                    continue
-                results.append((href, title, query))
+            results = tavily_tool.search(
+                query=query,
+                topic="general",
+                max_results=TAVILY_MAX_RESULTS,
+                format_output=False,
+            )
+            if isinstance(results, list):
+                for item in results:
+                    url = str(item.get("url", ""))
+                    title = str(item.get("title", query))
+                    content = str(item.get("content", ""))
+                    if content:
+                        snippets.append(
+                            _snippet(
+                                title=title,
+                                url=url,
+                                excerpt=f"query={query}\n{content}",
+                                source_type=f"tavily_search:{urlparse(url).netloc}",
+                            )
+                        )
+            elif isinstance(results, str) and results:
+                snippets.append(
+                    _snippet(
+                        title=f"{name} web search: {query}",
+                        url="",
+                        excerpt=f"query={query}\n{results}",
+                        source_type="tavily_search",
+                    )
+                )
         except Exception:
             continue
-        try:
-            bing_html = _http_text(f"https://www.bing.com/search?q={quote_plus(query)}", timeout=15)
-            for href, title in _extract_bing_links(bing_html):
-                parsed = urlparse(href)
-                if parsed.scheme not in {"http", "https"}:
-                    continue
-                if any(blocked in href for blocked in ["bing.com", "microsoft.com", "linkedin.com"]):
-                    continue
-                results.append((href, title, query))
-        except Exception:
-            continue
-    deduped: list[tuple[str, str, str]] = []
-    seen: set[str] = set()
-    for href, title, query in results:
-        if href in seen:
-            continue
-        seen.add(href)
-        homepage = str(candidate.get("url", "")).strip()
-        if homepage and urlparse(href).netloc == urlparse(homepage).netloc and href != homepage:
-            pass
-        deduped.append((href, title, query))
-        if len(deduped) >= MAX_SEARCH_RESULTS:
-            break
-    return deduped
+    return snippets
 
 
 def _candidate_sources(candidate: dict[str, Any]) -> list[dict[str, Any]]:
@@ -186,29 +156,7 @@ def _candidate_sources(candidate: dict[str, Any]) -> list[dict[str, Any]]:
             )
         )
 
-    for href, title, query in _search_urls(candidate):
-        try:
-            html = _http_text(href, timeout=15)
-            clean_text = _clean_html_text(html)
-            if not clean_text:
-                continue
-            sources.append(
-                _snippet(
-                    title=title,
-                    url=href,
-                    excerpt=f"query={query}\n{clean_text}",
-                    source_type=f"search_result:{urlparse(href).netloc}",
-                )
-            )
-        except Exception as exc:
-            sources.append(
-                _snippet(
-                    title=title,
-                    url=href,
-                    excerpt=f"query={query}\nsource fetch failed: {exc}",
-                    source_type="search_fetch_error",
-                )
-            )
+    sources.extend(_tavily_search_snippets(candidate))
 
     return _unique_by_url(sources)
 
