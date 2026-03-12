@@ -4,8 +4,8 @@ import json
 import re
 from typing import Any
 
-from .startup_search_agent import build_openai_client
-from .state import InvestmentState
+from agents.startup_search_agent import build_openai_client
+from core.state import InvestmentState
 
 
 MODEL_NAME = "gpt-4.1-mini"

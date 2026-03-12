@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from langchain_core.embeddings import Embeddings
 from sentence_transformers import SentenceTransformer
 
 
 E5_MODEL_NAME = "intfloat/multilingual-e5-large-instruct"
 
 
-class E5InstructEmbeddings:
+class E5InstructEmbeddings(Embeddings):
     def __init__(self, model_name: str = E5_MODEL_NAME) -> None:
         self.model_name = model_name
         self._model = SentenceTransformer(model_name)

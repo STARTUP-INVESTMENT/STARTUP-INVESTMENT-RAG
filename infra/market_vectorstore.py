@@ -7,11 +7,11 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from .embeddings import E5InstructEmbeddings, E5_MODEL_NAME
+from infra.embeddings import E5InstructEmbeddings, E5_MODEL_NAME
 
 
 DATA_DIR = Path("data")
-CACHE_DIR = Path(".cache/market_vectorstore")
+CACHE_DIR = Path(".cache/vectorstore")
 EMBEDDING_META_FILE = "embedding_model.txt"
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 100
@@ -83,11 +83,7 @@ def load_or_build_vectorstore(
     data_dir: Path = DATA_DIR,
     cache_dir: Path = CACHE_DIR,
 ) -> Optional[FAISS]:
-    """
-    data_dir 에 PDF가 있으면 FAISS 인덱스를 빌드/로드해 반환한다.
-    PDF가 없으면 None을 반환한다(market_evaluation은 도메인 컨텍스트만 사용).
-    같은 프로세스 내에서는 모듈 캐시로 중복 로딩을 막는다.
-    """
+    """data/ 하위 PDF 전체를 대상으로 FAISS 인덱스를 빌드/로드한다."""
     cache_key = str(cache_dir.resolve())
     if cache_key in _vectorstore_cache:
         return _vectorstore_cache[cache_key]
@@ -123,7 +119,7 @@ def load_or_build_vectorstore(
     return vectorstore
 
 
-def retrieve_market_context(vectorstore: FAISS, query: str, k: int = RETRIEVE_K) -> str:
+def retrieve_relevant_context(vectorstore: FAISS, query: str, k: int = RETRIEVE_K) -> str:
     """유사도 검색으로 관련 청크를 합쳐 하나의 컨텍스트 문자열로 반환한다."""
     docs = vectorstore.similarity_search(query, k=k)
     if not docs:
@@ -135,3 +131,7 @@ def retrieve_market_context(vectorstore: FAISS, query: str, k: int = RETRIEVE_K)
         header = f"[{source} p.{page}]" if source else "[market doc]"
         chunks.append(f"{header}\n{doc.page_content}")
     return "\n\n---\n\n".join(chunks)
+
+
+def retrieve_market_context(vectorstore: FAISS, query: str, k: int = RETRIEVE_K) -> str:
+    return retrieve_relevant_context(vectorstore, query, k=k)

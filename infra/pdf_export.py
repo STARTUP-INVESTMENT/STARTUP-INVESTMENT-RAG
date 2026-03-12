@@ -253,6 +253,7 @@ def build_combined_pdf(
     *,
     output_path: Path,
     user_query: str,
+    summary_content: str,
     report_history: list[dict[str, Any]],
 ) -> Path:
     font_name = _register_korean_font()
@@ -290,7 +291,7 @@ def build_combined_pdf(
         _front_matter_table(
             [
                 ("문서 목적", "후보 스타트업의 투자 적합도를 기술, 시장, 경쟁, 사업성 관점에서 비교 평가"),
-                ("평가 방법", "7개 항목 Scorecard와 Hard Filter 기반 정성·정량 혼합 평가"),
+                ("평가 방법", "7개 항목 Scorecard 기반 정성·정량 혼합 평가"),
                 ("보고서 범위", "후보사 요약, 기업별 상세 분석, 점수 비교, 핵심 리스크 및 투자 제언"),
                 ("유의 사항", "공개 자료 기반 초안이며 실제 투자 전 추가 실사와 검증이 필요"),
             ],
@@ -308,44 +309,16 @@ def build_combined_pdf(
     story.append(Paragraph("Summary", styles["title"]))
     story.append(_paragraph(f"질의: {user_query}", styles["body"]))
     story.append(Spacer(1, 8))
-
-    table_data: list[list[Paragraph]] = [
-        [
-            _paragraph("스타트업", styles["table_header"]),
-            _paragraph("판단", styles["table_header"]),
-            _paragraph("최종 점수", styles["table_header"]),
-            _paragraph("핵심 사유", styles["table_header"]),
-        ]
-    ]
-    for item in report_history:
-        table_data.append(
-            [
-                _paragraph(str(item.get("startup_name", "")), styles["table_body"]),
-                _paragraph("투자" if str(item.get("decision", "")) == "invest" else "보류", styles["table_body"]),
-                _paragraph(str(item.get("final_score", "")), styles["table_body"]),
-                _paragraph(str(item.get("summary", "")), styles["table_body"]),
-            ]
-        )
-
-    summary_table = Table(table_data, colWidths=[35 * mm, 18 * mm, 22 * mm, doc.width - 75 * mm], repeatRows=1)
-    summary_table.setStyle(
-        TableStyle(
-            [
-                ("FONTNAME", (0, 0), (-1, -1), font_name),
-                ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-                ("LEADING", (0, 0), (-1, -1), 11),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E7EB")),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#9CA3AF")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F9FAFB")]),
-            ]
-        )
-    )
-    story.append(summary_table)
+    for raw_line in [*summary_content.splitlines(), ""]:
+        line = raw_line.strip()
+        if not line or line.startswith("# "):
+            if not line:
+                story.append(Spacer(1, 4))
+            continue
+        if line.startswith("## "):
+            story.append(_paragraph(line[3:], styles["heading"]))
+            continue
+        story.append(_paragraph(line, styles["body"]))
     story.append(Spacer(1, 12))
 
     for index, item in enumerate(report_history):

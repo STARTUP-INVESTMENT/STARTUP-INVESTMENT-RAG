@@ -11,8 +11,8 @@ from urllib.request import Request, urlopen
 
 from openai import OpenAI
 
-from .prompt_loader import load_prompt
-from .state import InvestmentState
+from core.prompt_loader import load_prompt
+from core.state import InvestmentState
 
 
 DEFAULT_USER_AGENT = "Mozilla/5.0"
@@ -26,8 +26,6 @@ YC_ALGOLIA_API_KEY = (
     "dGVfcHJvZHVjdGlvbiZ0YWdGaWx0ZXJzPSU1QiUyMnljZGNfcHVibGljJTIyJTVE"
 )
 YC_ALGOLIA_URL = f"https://{YC_ALGOLIA_APP_ID.lower()}-dsn.algolia.net/1/indexes/*/queries"
-INNOFOREST_BASE_URL = "https://www.innoforest.co.kr"
-INNOFOREST_SITEMAP_INDEX_URL = f"{INNOFOREST_BASE_URL}/sitemap.xml"
 ROBOTICS_HINTS = [
     "robot",
     "robotics",
@@ -530,8 +528,7 @@ def startup_search_node(state: InvestmentState) -> InvestmentState:
     client = build_openai_client()
     keywords = extract_search_keywords(user_query, client)
     yc_candidates = fetch_yc_candidates(keywords)
-    innoforest_candidates = search_innoforest_candidates(keywords)
-    raw_candidates = deduplicate_candidates([*yc_candidates, *innoforest_candidates])
+    raw_candidates = deduplicate_candidates(yc_candidates)
     relevant_names = set(llm_relevance_filter(user_query, raw_candidates, client))
     filtered_candidates = [candidate for candidate in raw_candidates if candidate.name in relevant_names]
     if not filtered_candidates:
@@ -550,10 +547,9 @@ def startup_search_node(state: InvestmentState) -> InvestmentState:
         "startup_basic_info": startup_basic_info,
         "startup_candidates": [candidate.to_dict() for candidate in filtered_candidates],
         "startup_search_summary": (
-            f"YC {sum('ycombinator' in candidate.source for candidate in filtered_candidates)}개, "
-            f"혁신의숲 {sum('innoforest' in candidate.source for candidate in filtered_candidates)}개 후보를 정리했다."
+            f"YC 기반으로 {len(filtered_candidates)}개 후보를 정리했다."
         ),
         "startup_search_corpus_path": str(corpus_path),
         "startup_search_vectorstore_path": "",
-        "rag_sources": ["https://www.ycombinator.com/companies", INNOFOREST_SITEMAP_INDEX_URL],
+        "rag_sources": ["https://www.ycombinator.com/companies"],
     }

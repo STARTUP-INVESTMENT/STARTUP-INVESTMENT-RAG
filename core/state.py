@@ -25,10 +25,10 @@ class InvestmentState(TypedDict, total=False):
     market_research_summary: str
     market_research_sources: list[dict[str, Any]]
     market_research_snippets: list[dict[str, Any]]
-    research_cache_path: str
-    research_summary: str
-    research_sources: list[dict[str, Any]]
-    research_snippets: list[dict[str, Any]]
+    competitor_research_cache_path: str
+    competitor_research_summary: str
+    competitor_research_sources: list[dict[str, Any]]
+    competitor_research_snippets: list[dict[str, Any]]
     team_assessment: dict[str, Any]
     trl_level: int
     tech_summary: str
