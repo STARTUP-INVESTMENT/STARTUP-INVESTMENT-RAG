@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Optional
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from .startup_search_agent import load_env_file
+from .embeddings import E5InstructEmbeddings, E5_MODEL_NAME
 
 
 DATA_DIR = Path("data")
 CACHE_DIR = Path(".cache/market_vectorstore")
+EMBEDDING_META_FILE = "embedding_model.txt"
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 100
 RETRIEVE_K = 5
@@ -22,15 +21,33 @@ RETRIEVE_K = 5
 _vectorstore_cache: dict[str, FAISS] = {}
 
 
-def _get_embeddings() -> OpenAIEmbeddings:
-    load_env_file(Path.cwd() / ".env")
-    return OpenAIEmbeddings(api_key=os.environ.get("OPENAI_API_KEY", ""))
+def _get_embeddings() -> E5InstructEmbeddings:
+    return E5InstructEmbeddings()
+
+
+def _meta_path(cache_dir: Path) -> Path:
+    return cache_dir / EMBEDDING_META_FILE
+
+
+def _write_embedding_meta(cache_dir: Path) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    _meta_path(cache_dir).write_text(E5_MODEL_NAME, encoding="utf-8")
+
+
+def _embedding_meta_matches(cache_dir: Path) -> bool:
+    meta_file = _meta_path(cache_dir)
+    if not meta_file.exists():
+        return False
+    cached_model = meta_file.read_text(encoding="utf-8").strip()
+    return cached_model == E5_MODEL_NAME
 
 
 def _should_rebuild(data_dir: Path, cache_dir: Path) -> bool:
     """캐시가 없거나 PDF보다 오래됐으면 재빌드 필요."""
     index_path = cache_dir / "index.faiss"
     if not index_path.exists():
+        return True
+    if not _embedding_meta_matches(cache_dir):
         return True
     cache_mtime = index_path.stat().st_mtime
     for pdf in data_dir.glob("**/*.pdf"):
@@ -39,7 +56,7 @@ def _should_rebuild(data_dir: Path, cache_dir: Path) -> bool:
     return False
 
 
-def _build_from_pdfs(data_dir: Path, embeddings: OpenAIEmbeddings) -> Optional[FAISS]:
+def _build_from_pdfs(data_dir: Path, embeddings: E5InstructEmbeddings) -> Optional[FAISS]:
     pdf_files = list(data_dir.glob("**/*.pdf"))
     if not pdf_files:
         return None
@@ -81,16 +98,24 @@ def load_or_build_vectorstore(
     embeddings = _get_embeddings()
 
     if not _should_rebuild(data_dir, cache_dir):
-        vectorstore = FAISS.load_local(
-            str(cache_dir),
-            embeddings,
-            allow_dangerous_deserialization=True,
-        )
+        try:
+            vectorstore = FAISS.load_local(
+                str(cache_dir),
+                embeddings,
+                allow_dangerous_deserialization=True,
+            )
+        except Exception:
+            vectorstore = _build_from_pdfs(data_dir, embeddings)
+            if vectorstore is not None:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                vectorstore.save_local(str(cache_dir))
+                _write_embedding_meta(cache_dir)
     else:
         vectorstore = _build_from_pdfs(data_dir, embeddings)
         if vectorstore is not None:
             cache_dir.mkdir(parents=True, exist_ok=True)
             vectorstore.save_local(str(cache_dir))
+            _write_embedding_meta(cache_dir)
 
     if vectorstore is not None:
         _vectorstore_cache[cache_key] = vectorstore
