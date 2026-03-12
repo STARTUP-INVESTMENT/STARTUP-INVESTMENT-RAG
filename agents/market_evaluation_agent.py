@@ -33,6 +33,8 @@ def market_evaluation_node(state: InvestmentState) -> InvestmentState:
             "startup_name": state["startup_name"],
             "user_query": state.get("user_query", ""),
             "startup_basic_info": candidate,
+            "research_summary": state.get("market_research_summary", state.get("research_summary", "")),
+            "research_snippets": state.get("market_research_snippets", state.get("research_snippets", [])),
             "domain_context": "Robotics market with focus on labor shortage, automation, AI-robotics convergence, and ROI sensitivity.",
             "market_context": market_context,
         },
