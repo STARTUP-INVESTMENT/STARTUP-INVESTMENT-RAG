@@ -13,6 +13,13 @@ SCORE_WEIGHTS = {
     "safety_regulation": 0.05,
     "business_model": 0.05,
 }
+HARD_FILTER_LABELS = {
+    "trl_below_7_signal": "TRL 7 미만 또는 기술 검증 근거 부족",
+    "no_manufacturing_plan_signal": "양산 계획 또는 제조 파트너 근거 부족",
+    "no_roi_evidence_signal": "고객 ROI 정량 근거 부족",
+    "weak_moat_signal": "기술 해자 약함",
+    "no_safety_plan_signal": "안전 인증 또는 규제 대응 계획 부족",
+}
 
 
 def _clamp_score(value: float) -> float:
@@ -43,6 +50,21 @@ def _hard_filters(state: InvestmentState) -> dict[str, bool]:
     }
 
 
+def _hard_filter_summary(hard_filter_results: dict[str, bool]) -> str:
+    triggered = [label for key, label in HARD_FILTER_LABELS.items() if hard_filter_results.get(key, False)]
+    clear = [label for key, label in HARD_FILTER_LABELS.items() if not hard_filter_results.get(key, False)]
+    if triggered:
+        return (
+            "Hard Filter에서 "
+            + ", ".join(triggered)
+            + " 항목이 경고로 확인되었다. "
+            + "반면 "
+            + (", ".join(clear) if clear else "나머지 항목")
+            + " 항목은 특이사항이 없었다."
+        )
+    return "Hard Filter에서는 유의미한 경고 항목이 확인되지 않았다."
+
+
 def investment_decision_node(state: InvestmentState) -> InvestmentState:
     team = state.get("team_assessment", {})
     market = state.get("market_assessment", {})
@@ -69,7 +91,8 @@ def investment_decision_node(state: InvestmentState) -> InvestmentState:
         f"팀 {scorecard['team_founders']}, 시장 {scorecard['market_opportunity']}, 기술/양산 {scorecard['technology_production']}, "
         f"경쟁 {scorecard['competition_moat']}, ROI/트랙션 {scorecard['customer_roi_traction']}, "
         f"안전/규제 {scorecard['safety_regulation']}, 수익모델 {scorecard['business_model']}를 반영했다. "
-        f"Hard Filter 결과는 {hard_filter_results}이며 최종 판단은 {decision}이다."
+        f"{_hard_filter_summary(hard_filter_results)} "
+        f"최종 판단은 {'투자 추천' if decision == 'invest' else '관심 보류'}다."
     )
     return {
         "scorecard": scorecard,
