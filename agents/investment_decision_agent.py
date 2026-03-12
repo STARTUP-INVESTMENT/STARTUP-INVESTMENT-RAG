@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
-from .agent_utils import current_candidate
 from .state import InvestmentState
 
 
@@ -22,67 +19,61 @@ def _clamp_score(value: float) -> float:
     return max(1.0, min(5.0, round(value, 2)))
 
 
-def _team_score(candidate: dict[str, Any]) -> float:
-    tags_text = " ".join(candidate.get("tags") or [])
-    description = f"{candidate.get('description', '')} {tags_text}".lower()
-    team_signals = sum(
-        int(keyword in description)
-        for keyword in ["ai", "robot", "manufactur", "industrial", "automation", "vision", "autonomous"]
-    )
-    return _clamp_score(2.0 + 0.3 * min(team_signals, 6))
+def _score(value: object, default: float = 2.5) -> float:
+    try:
+        return _clamp_score(float(value))
+    except (TypeError, ValueError):
+        return default
 
 
-def _roi_score(candidate: dict[str, Any]) -> float:
-    description = candidate.get("description", "").lower()
-    signals = sum(
-        int(keyword in description)
-        for keyword in ["cost", "productivity", "throughput", "automation", "efficiency", "chores", "manufacturing"]
-    )
-    return _clamp_score(1.8 + 0.35 * min(signals, 6))
-
-
-def _safety_score(candidate: dict[str, Any]) -> float:
-    description = f"{candidate.get('description', '')} {' '.join(candidate.get('tags') or [])}".lower()
-    signals = sum(int(keyword in description) for keyword in ["industrial", "manufacturing", "robot", "autonomous", "service"])
-    return _clamp_score(1.8 + 0.3 * min(signals, 5))
-
-
-def _business_model_score(candidate: dict[str, Any]) -> float:
-    description = candidate.get("description", "").lower()
-    signals = sum(int(keyword in description) for keyword in ["platform", "software", "service", "data", "ai", "operating system"])
-    return _clamp_score(2.0 + 0.3 * min(signals, 5))
-
-
-def _build_scorecard(state: InvestmentState) -> tuple[dict[str, float], float]:
-    candidate = current_candidate(state)
+def _hard_filters(state: InvestmentState) -> dict[str, bool]:
     tech = state.get("tech_assessment", {})
-    market = state.get("market_assessment", {})
-    competitor = state.get("competitor_assessment", {})
-    scorecard = {
-        "team_founders": _team_score(candidate),
-        "market_opportunity": _clamp_score(float(market.get("score_1_to_5", 2.5))),
-        "technology_production": _clamp_score(float(tech.get("score_1_to_5", 2.5))),
-        "competition_moat": _clamp_score(float(competitor.get("score_1_to_5", 2.5))),
-        "customer_roi_traction": _roi_score(candidate),
-        "safety_regulation": _safety_score(candidate),
-        "business_model": _business_model_score(candidate),
+    roi = state.get("roi_traction_assessment", {})
+    safety = state.get("safety_assessment", {})
+    trl_level = int(tech.get("trl_level", 0) or 0)
+    manufacturing_readiness = str(tech.get("manufacturing_readiness", "insufficient_data")).lower()
+    roi_score = _score(roi.get("score_1_to_5", 0), 0.0)
+    safety_status = str(safety.get("regulation_status", "insufficient_data")).lower()
+    return {
+        "trl_below_7_signal": trl_level == 0 or trl_level < 7,
+        "no_manufacturing_plan_signal": "insufficient" in manufacturing_readiness or "none" in manufacturing_readiness,
+        "no_roi_evidence_signal": roi_score <= 2.0,
+        "weak_moat_signal": _score(state.get("competitor_assessment", {}).get("score_1_to_5", 0), 0.0) <= 2.0,
+        "no_safety_plan_signal": "insufficient" in safety_status or "none" in safety_status or "unknown" in safety_status,
     }
-    final_score = round(sum(scorecard[key] * SCORE_WEIGHTS[key] for key in SCORE_WEIGHTS), 2)
-    return scorecard, final_score
 
 
 def investment_decision_node(state: InvestmentState) -> InvestmentState:
-    scorecard, final_score = _build_scorecard(state)
-    decision = "hold" if final_score < INVESTMENT_THRESHOLD else "invest"
-    candidate = current_candidate(state)
+    team = state.get("team_assessment", {})
+    market = state.get("market_assessment", {})
+    tech = state.get("tech_assessment", {})
+    competition = state.get("competitor_assessment", {})
+    roi = state.get("roi_traction_assessment", {})
+    safety = state.get("safety_assessment", {})
+    business = state.get("business_model_assessment", {})
+
+    scorecard = {
+        "team_founders": _score(team.get("score_1_to_5")),
+        "market_opportunity": _score(market.get("score_1_to_5")),
+        "technology_production": _score(tech.get("score_1_to_5")),
+        "competition_moat": _score(competition.get("score_1_to_5")),
+        "customer_roi_traction": _score(roi.get("score_1_to_5")),
+        "safety_regulation": _score(safety.get("score_1_to_5")),
+        "business_model": _score(business.get("score_1_to_5")),
+    }
+    final_score = round(sum(scorecard[key] * SCORE_WEIGHTS[key] for key in SCORE_WEIGHTS), 2)
+    hard_filter_results = _hard_filters(state)
+    decision = "hold" if any(hard_filter_results.values()) or final_score < INVESTMENT_THRESHOLD else "invest"
     decision_reason = (
-        f"{candidate.get('name', state['startup_name'])}의 최종 점수는 {final_score}점이다. "
-        f"기술/양산 점수 {scorecard['technology_production']}, 시장 점수 {scorecard['market_opportunity']}, "
-        f"경쟁 해자 점수 {scorecard['competition_moat']}를 반영했다. "
-        f"종합 스코어카드 기준 최종 판단은 {decision}이다."
+        f"{state.get('startup_name', '')}의 최종 점수는 {final_score}점이다. "
+        f"팀 {scorecard['team_founders']}, 시장 {scorecard['market_opportunity']}, 기술/양산 {scorecard['technology_production']}, "
+        f"경쟁 {scorecard['competition_moat']}, ROI/트랙션 {scorecard['customer_roi_traction']}, "
+        f"안전/규제 {scorecard['safety_regulation']}, 수익모델 {scorecard['business_model']}를 반영했다. "
+        f"Hard Filter 결과는 {hard_filter_results}이며 최종 판단은 {decision}이다."
     )
     return {
         "scorecard": scorecard,
+        "hard_filter_results": hard_filter_results,
         "final_score": final_score,
         "investment_decision": decision,
         "decision_reason": decision_reason,
