@@ -4,3 +4,9 @@ ipykernel==7.2.0
 nbconvert==7.16.6
 nbformat==5.10.4
 reportlab==4.4.1
+langchain-teddynote
+faiss-cpu
+langchain-openai
+langchain-community
+langchain-text-splitters
+pypdf
