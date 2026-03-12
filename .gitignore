@@ -1,2 +1,6 @@
 .env
 .venv
+.cache
+__pycache__/
+outputs/*.md
+outputs/*.pdf

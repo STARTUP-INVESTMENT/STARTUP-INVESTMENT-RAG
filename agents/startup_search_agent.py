@@ -11,7 +11,8 @@ from urllib.request import Request, urlopen
 
 from openai import OpenAI
 
-from state import InvestmentState
+from .prompt_loader import load_prompt
+from .state import InvestmentState
 
 
 DEFAULT_USER_AGENT = "Mozilla/5.0"
@@ -128,6 +129,17 @@ def _save_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def _normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip().lower()
 
@@ -186,6 +198,7 @@ def _safe_join(values: list[Any]) -> str:
 
 
 def build_openai_client() -> OpenAI:
+    load_env_file(Path.cwd() / ".env")
     api_key = os.getenv("OPENAI_API_KEY") or os.getenv("OPNEAI_API_KEY")
     if not api_key:
         raise RuntimeError(".env에 OPENAI_API_KEY를 넣어야 합니다. 이전 오타 키 OPNEAI_API_KEY도 임시 지원합니다.")
@@ -196,14 +209,7 @@ def extract_search_keywords(user_query: str, client: OpenAI) -> list[str]:
     response = client.responses.create(
         model="gpt-4.1-mini",
         input=[
-            {
-                "role": "system",
-                "content": (
-                    "You expand user queries into search keywords for robotics startup discovery. "
-                    "Return strict JSON with a single key keywords. "
-                    "Generate 4 to 8 focused keywords in Korean and English when useful."
-                ),
-            },
+            {"role": "system", "content": load_prompt("startup_search_keywords.txt")},
             {
                 "role": "user",
                 "content": (
@@ -420,15 +426,7 @@ def llm_relevance_filter(user_query: str, candidates: list[StartupCandidate], cl
     response = client.responses.create(
         model="gpt-4.1-mini",
         input=[
-            {
-                "role": "system",
-                "content": (
-                    "You filter startup search results for an investment analyst. "
-                    "Return strict JSON with key filtered_candidates. "
-                    "Each item must contain name, relevance_label, relevance_reason. "
-                    "Allowed labels are relevant, maybe, irrelevant."
-                ),
-            },
+            {"role": "system", "content": load_prompt("startup_relevance_filter.txt")},
             {
                 "role": "user",
                 "content": json.dumps({"user_query": user_query, "candidates": candidate_payload}, ensure_ascii=False),
@@ -443,14 +441,7 @@ def build_search_state(user_query: str, candidates: list[StartupCandidate], clie
     response = client.responses.create(
         model="gpt-4.1-mini",
         input=[
-            {
-                "role": "system",
-                "content": (
-                    "You are building only the startup-search portion of an investment workflow. "
-                    "Return strict JSON with keys startup_name, startup_list, evaluated_startups, startup_basic_info. "
-                    "Do not invent facts."
-                ),
-            },
+            {"role": "system", "content": load_prompt("startup_search_state.txt")},
             {
                 "role": "user",
                 "content": json.dumps(
@@ -481,8 +472,9 @@ def save_startup_search_corpus(candidates: list[StartupCandidate], *, cache_dir:
 
 def _next_startup_name(state: InvestmentState) -> str:
     for startup in state.get("startup_list", []):
-        if startup not in state.get("evaluated_startups", []):
-            return startup
+        startup_name = startup["name"] if isinstance(startup, dict) else startup
+        if startup_name not in state.get("evaluated_startups", []):
+            return startup_name
     return ""
 
 
@@ -508,13 +500,32 @@ def startup_search_node(state: InvestmentState) -> InvestmentState:
     filtered_candidates = [candidate for candidate in raw_candidates if candidate.name in relevant_names]
     search_state = build_search_state(user_query, filtered_candidates, client)
     corpus_path = save_startup_search_corpus(filtered_candidates)
+    candidate_map = {candidate.name: candidate.to_dict() for candidate in filtered_candidates}
+    normalized_startup_list = [
+        item["name"] if isinstance(item, dict) and "name" in item else str(item)
+        for item in search_state.get("startup_list", [])
+    ]
+    normalized_startup_list = [name for name in normalized_startup_list if name in candidate_map]
+    if not normalized_startup_list:
+        normalized_startup_list = [candidate.name for candidate in filtered_candidates]
+
+    startup_name = search_state.get("startup_name", "")
+    if isinstance(startup_name, dict):
+        startup_name = startup_name.get("name", "")
+    startup_name = str(startup_name)
+    if startup_name not in candidate_map:
+        startup_name = normalized_startup_list[0] if normalized_startup_list else ""
+
+    startup_basic_info = search_state.get("startup_basic_info", {})
+    if not isinstance(startup_basic_info, dict) or startup_basic_info.get("name") not in candidate_map:
+        startup_basic_info = candidate_map.get(startup_name, {"name": startup_name})
 
     return {
         "search_keywords": keywords,
-        "startup_name": search_state["startup_name"],
-        "startup_list": search_state["startup_list"],
+        "startup_name": startup_name,
+        "startup_list": normalized_startup_list,
         "evaluated_startups": search_state.get("evaluated_startups", []),
-        "startup_basic_info": search_state["startup_basic_info"],
+        "startup_basic_info": startup_basic_info,
         "startup_candidates": [candidate.to_dict() for candidate in filtered_candidates],
         "startup_search_summary": (
             f"YC {sum('ycombinator' in candidate.source for candidate in filtered_candidates)}개, "

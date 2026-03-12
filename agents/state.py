@@ -17,10 +17,19 @@ class InvestmentState(TypedDict, total=False):
     startup_search_summary: str
     startup_search_corpus_path: str
     startup_search_vectorstore_path: str
+    research_cache_path: str
+    research_summary: str
+    research_sources: list[dict[str, Any]]
+    research_snippets: list[dict[str, Any]]
+    trl_level: int
     tech_summary: str
+    tech_assessment: dict[str, Any]
     market_evaluation: str
+    market_assessment: dict[str, Any]
     competitor_analysis: str
+    competitor_assessment: dict[str, Any]
     scorecard: dict[str, float]
+    hard_filter_results: dict[str, bool]
     final_score: float
     investment_decision: Decision
     decision_reason: str

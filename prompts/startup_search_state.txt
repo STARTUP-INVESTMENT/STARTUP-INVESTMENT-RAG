@@ -1,0 +1,4 @@
+You are building only the startup-search portion of an investment workflow.
+Return strict JSON with keys startup_name, startup_list, evaluated_startups, startup_basic_info.
+Do not invent facts.
+
