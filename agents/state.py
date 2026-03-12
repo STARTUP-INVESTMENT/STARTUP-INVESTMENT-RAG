@@ -29,7 +29,6 @@ class InvestmentState(TypedDict, total=False):
     competitor_analysis: str
     competitor_assessment: dict[str, Any]
     scorecard: dict[str, float]
-    hard_filter_results: dict[str, bool]
     final_score: float
     investment_decision: Decision
     decision_reason: str

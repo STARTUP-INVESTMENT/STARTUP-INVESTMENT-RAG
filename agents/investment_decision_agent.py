@@ -53,24 +53,7 @@ def _business_model_score(candidate: dict[str, Any]) -> float:
     return _clamp_score(2.0 + 0.3 * min(signals, 5))
 
 
-def _hard_filters(
-    tech_assessment: dict[str, Any],
-    competitor_assessment: dict[str, Any],
-    candidate: dict[str, Any],
-) -> dict[str, bool]:
-    trl_level = int(tech_assessment.get("trl_level", 0) or 0)
-    manufacturing_readiness = str(tech_assessment.get("manufacturing_readiness", "")).lower()
-    description = candidate.get("description", "").lower()
-    roi_missing = _roi_score(candidate) <= 2.0
-    return {
-        "trl_below_7_signal": trl_level == 0 or trl_level < 7,
-        "no_manufacturing_plan_signal": "insufficient_data" in manufacturing_readiness or "none" in manufacturing_readiness,
-        "no_roi_evidence_signal": roi_missing,
-        "weak_moat_signal": competitor_assessment.get("score_1_to_5", 0.0) < 2.0 and "patent" not in description,
-    }
-
-
-def _build_scorecard(state: InvestmentState) -> tuple[dict[str, float], dict[str, bool], float]:
+def _build_scorecard(state: InvestmentState) -> tuple[dict[str, float], float]:
     candidate = current_candidate(state)
     tech = state.get("tech_assessment", {})
     market = state.get("market_assessment", {})
@@ -84,25 +67,22 @@ def _build_scorecard(state: InvestmentState) -> tuple[dict[str, float], dict[str
         "safety_regulation": _safety_score(candidate),
         "business_model": _business_model_score(candidate),
     }
-    hard_filter_results = _hard_filters(tech, competitor, candidate)
     final_score = round(sum(scorecard[key] * SCORE_WEIGHTS[key] for key in SCORE_WEIGHTS), 2)
-    return scorecard, hard_filter_results, final_score
+    return scorecard, final_score
 
 
 def investment_decision_node(state: InvestmentState) -> InvestmentState:
-    scorecard, hard_filter_results, final_score = _build_scorecard(state)
-    hard_filter_triggered = any(hard_filter_results.values())
-    decision = "hold" if hard_filter_triggered or final_score < INVESTMENT_THRESHOLD else "invest"
+    scorecard, final_score = _build_scorecard(state)
+    decision = "hold" if final_score < INVESTMENT_THRESHOLD else "invest"
     candidate = current_candidate(state)
     decision_reason = (
         f"{candidate.get('name', state['startup_name'])}의 최종 점수는 {final_score}점이다. "
         f"기술/양산 점수 {scorecard['technology_production']}, 시장 점수 {scorecard['market_opportunity']}, "
         f"경쟁 해자 점수 {scorecard['competition_moat']}를 반영했다. "
-        f"Hard Filter 결과는 {hard_filter_results}이며 최종 판단은 {decision}이다."
+        f"종합 스코어카드 기준 최종 판단은 {decision}이다."
     )
     return {
         "scorecard": scorecard,
-        "hard_filter_results": hard_filter_results,
         "final_score": final_score,
         "investment_decision": decision,
         "decision_reason": decision_reason,

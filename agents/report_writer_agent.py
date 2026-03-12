@@ -15,14 +15,6 @@ SCORECARD_LABELS = {
     "business_model": "수익 모델 지속성",
 }
 
-HARD_FILTER_LABELS = {
-    "trl_below_7_signal": "TRL 7 미만 또는 근거 부족",
-    "no_manufacturing_plan_signal": "양산 계획 또는 제조 파트너 근거 부족",
-    "no_roi_evidence_signal": "고객 ROI 정량 근거 부족",
-    "weak_moat_signal": "기술 해자 약함",
-}
-
-
 def _bullet_lines(items: list[str]) -> list[str]:
     if not items:
         return ["- 없음"]
@@ -71,14 +63,6 @@ def _scorecard_lines(scorecard: dict[str, object]) -> list[str]:
     }
     for key, label in SCORECARD_LABELS.items():
         lines.append(f"| {label} | {scorecard.get(key, '')} | {weights[key]} |")
-    return lines
-
-
-def _hard_filter_lines(hard_filter_results: dict[str, bool]) -> list[str]:
-    lines = []
-    for key, label in HARD_FILTER_LABELS.items():
-        triggered = bool(hard_filter_results.get(key, False))
-        lines.append(f"- {label}: {'예' if triggered else '아니오'}")
     return lines
 
 
@@ -192,7 +176,6 @@ def report_writer_node(state: InvestmentState) -> InvestmentState:
     startup_name = state["startup_name"]
     startup_basic_info = state.get("startup_basic_info", {})
     scorecard = state.get("scorecard", {})
-    hard_filter_results = state.get("hard_filter_results", {})
     localized = _localized_report_fields(state)
     research_sources = state.get("research_sources", [])
     company_report = "\n".join(
@@ -241,9 +224,6 @@ def report_writer_node(state: InvestmentState) -> InvestmentState:
             "## 스코어카드",
             *_scorecard_lines(scorecard),
             "",
-            "## Hard Filter",
-            *_hard_filter_lines(hard_filter_results),
-            "",
             "## 수집 근거",
             *_research_source_lines(research_sources),
             "",
@@ -259,7 +239,6 @@ def report_writer_node(state: InvestmentState) -> InvestmentState:
             "final_score": state.get("final_score", 0.0),
             "summary": localized["summary_reason_short_ko"],
             "scorecard": scorecard,
-            "hard_filter_results": hard_filter_results,
             "startup_basic_info": startup_basic_info,
             "report_content": company_report,
         }
