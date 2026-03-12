@@ -65,6 +65,8 @@ class StartupCandidate:
     sector: str = ""
     stage: str = ""
     tags: list[str] | None = None
+    core_concept: str = ""
+    team_members: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -80,8 +82,40 @@ class StartupCandidate:
             f"sector: {self.sector}",
             f"stage: {self.stage}",
             f"tags: {tags}",
+            f"core_concept: {self.core_concept}",
+            f"team_members: {', '.join(self.team_members or [])}",
         ]
         return "\n".join(field for field in fields if field.split(": ", 1)[1])
+
+
+def _extract_yc_team_members(hit: dict[str, Any]) -> list[str]:
+    members: list[str] = []
+    founders = hit.get("founders")
+    if isinstance(founders, list):
+        for founder in founders:
+            if isinstance(founder, dict):
+                name = str(founder.get("name", "")).strip()
+            else:
+                name = str(founder).strip()
+            if name:
+                members.append(name)
+    team = hit.get("team")
+    if isinstance(team, list):
+        for member in team:
+            if isinstance(member, dict):
+                name = str(member.get("name", "")).strip()
+            else:
+                name = str(member).strip()
+            if name:
+                members.append(name)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for member in members:
+        key = _normalize_text(member)
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(member)
+    return deduped[:6]
 
 
 def _http_text(url: str, *, timeout: int = 20) -> str:
@@ -246,16 +280,20 @@ def fetch_yc_candidates(keywords: list[str], *, hits_per_keyword: int = 8) -> li
         )
         for hit in response["results"][0]["hits"]:
             slug = hit.get("slug", "")
+            one_liner = hit.get("one_liner", "")
+            long_description = hit.get("long_description", "")
             candidates.append(
                 StartupCandidate(
                     name=hit["name"],
                     source="ycombinator",
                     url=f"https://www.ycombinator.com/companies/{slug}" if slug else "https://www.ycombinator.com/companies",
-                    description=hit.get("one_liner") or hit.get("long_description", ""),
+                    description=one_liner or long_description,
                     location=hit.get("all_locations", ""),
                     sector=hit.get("subindustry") or hit.get("industry", ""),
                     stage=hit.get("stage", ""),
                     tags=hit.get("tags", []),
+                    core_concept=one_liner or long_description,
+                    team_members=_extract_yc_team_members(hit),
                 )
             )
     return candidates
@@ -334,6 +372,16 @@ def fetch_innoforest_company_profile(
 def _build_candidate_from_profile(profile: dict[str, Any]) -> StartupCandidate:
     people = profile.get("people_list") or []
     ceo = next((person.get("peopleName", "") for person in people if person.get("role") == "CEO"), "")
+    team_members: list[str] = []
+    for person in people:
+        name = str(person.get("peopleName", "")).strip()
+        role = str(person.get("role", "")).strip()
+        if not name:
+            continue
+        if role in {"CEO", "CTO", "COO", "Founder", "Co-founder", "CPO"}:
+            team_members.append(f"{name}({role})")
+        elif len(team_members) < 4:
+            team_members.append(name)
     intro = profile.get("intro", "")
     if ceo:
         intro = f"{intro} CEO: {ceo}".strip()
@@ -349,6 +397,8 @@ def _build_candidate_from_profile(profile: dict[str, Any]) -> StartupCandidate:
         sector=profile.get("category_name", "") or "",
         stage=found_year,
         tags=[profile.get("product_name", ""), profile.get("identity_keywords", "")],
+        core_concept=profile.get("product_name") or profile.get("intro", "") or profile.get("meta_description", ""),
+        team_members=team_members[:6],
     )
 
 
@@ -418,6 +468,8 @@ def deduplicate_candidates(candidates: list[StartupCandidate]) -> list[StartupCa
             sector=existing.sector or candidate.sector,
             stage=existing.stage or candidate.stage,
             tags=tags,
+            core_concept=existing.core_concept or candidate.core_concept,
+            team_members=(existing.team_members or []) or (candidate.team_members or []),
         )
     return list(deduped.values())
 

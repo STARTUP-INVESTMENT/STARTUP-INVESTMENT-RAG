@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date
+import re
+from urllib.parse import urlparse
 
 from .state import InvestmentState
 
@@ -223,45 +225,140 @@ def _render_strengths(evaluations: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
-def _render_references(evaluations: list[dict[str, object]]) -> str:
-    seen: set[str] = set()
-    ordered: list[str] = []
+def _clean_source_title(title: str) -> str:
+    cleaned = re.sub(r"\s+p\.\d+\s*$", "", title or "").strip()
+    return cleaned or "자료명 미기재"
+
+
+def _extract_year(text: str) -> str:
+    match = re.search(r"(20\d{2})", text or "")
+    return match.group(1) if match else str(REPORT_DATE.year)
+
+
+def _extract_date(text: str) -> str:
+    match = re.search(r"(20\d{2})[-_/]?(\d{2})[-_/]?(\d{2})", text or "")
+    if not match:
+        return REPORT_DATE.isoformat()
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+
+
+def _site_name(url: str) -> str:
+    host = urlparse(url or "").netloc.lower().replace("www.", "").strip()
+    return host or "source"
+
+
+def _source_org(title: str, url: str) -> str:
+    site = _site_name(url)
+    if site and site != "source":
+        return site.split(".")[0].upper()
+    token = re.split(r"[\s\-\|_/]+", _clean_source_title(title))[0].strip()
+    return token or "출처기관"
+
+
+def _classify_reference(source: dict[str, str]) -> str:
+    text = " ".join(
+        [
+            source.get("title", ""),
+            source.get("url", ""),
+            source.get("source_type", ""),
+        ]
+    ).lower()
+    if any(keyword in text for keyword in ["arxiv", "doi.org", "journal", "proceedings", "ieee", "acm", "springer"]):
+        return "academic"
+    if any(keyword in text for keyword in ["report", "outlook", "whitepaper", "보고서", "백서"]):
+        return "institution"
+    return "web"
+
+
+def _collect_used_sources(evaluations: list[dict[str, object]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
     for evaluation in evaluations:
-        for source in evaluation.get("rag_sources", []):
-            source_text = str(source).strip()
-            if source_text and source_text not in seen:
-                seen.add(source_text)
-                ordered.append(source_text)
+        basic_info = evaluation.get("startup_basic_info", {})
+        if isinstance(basic_info, dict):
+            profile_url = str(basic_info.get("url", "")).strip()
+            if profile_url:
+                rows.append(
+                    {
+                        "title": f"{evaluation.get('startup_name', '')} company profile",
+                        "url": profile_url,
+                        "source_type": "startup_profile",
+                    }
+                )
         for source in evaluation.get("tech_research_sources", []):
-            label = str(source.get("title") or source.get("url") or "").strip()
-            if label and label not in seen:
-                seen.add(label)
-                ordered.append(label)
+            rows.append(
+                {
+                    "title": str(source.get("title", "")).strip(),
+                    "url": str(source.get("url", "")).strip(),
+                    "source_type": str(source.get("source_type", "")).strip(),
+                }
+            )
         for source in evaluation.get("market_research_sources", []):
-            label = str(source.get("title") or source.get("url") or "").strip()
-            if label and label not in seen:
-                seen.add(label)
-                ordered.append(label)
-    if not ordered:
-        return "- 기관 보고서\n- 학술 논문\n- 웹페이지"
-    return "\n".join(f"- {source}" for source in ordered)
+            rows.append(
+                {
+                    "title": str(source.get("title", "")).strip(),
+                    "url": str(source.get("url", "")).strip(),
+                    "source_type": str(source.get("source_type", "")).strip(),
+                }
+            )
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        key = (row.get("url", ""), row.get("title", ""))
+        if not row.get("url") or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _format_reference_line(category: str, source: dict[str, str]) -> str:
+    title = _clean_source_title(source.get("title", ""))
+    url = source.get("url", "")
+    org = _source_org(title, url)
+    year = _extract_year(f"{title} {url}")
+    if category == "institution":
+        return f"- {org}({year}). *{title}*. {url}"
+    if category == "academic":
+        return f"- {org}({year}). {title}. *학술지 미상*, 권(호) 미상, 페이지 미상."
+    date_text = _extract_date(f"{title} {url}")
+    return f"- {org}({date_text}). *{title}*. {_site_name(url)}, {url}"
+
+
+def _render_references(evaluations: list[dict[str, object]]) -> str:
+    used_sources = _collect_used_sources(evaluations)
+    grouped = {"institution": [], "academic": [], "web": []}
+    for source in used_sources:
+        category = _classify_reference(source)
+        grouped[category].append(_format_reference_line(category, source))
+    institution_lines = "\n".join(grouped["institution"]) if grouped["institution"] else "- 해당 없음"
+    academic_lines = "\n".join(grouped["academic"]) if grouped["academic"] else "- 해당 없음"
+    web_lines = "\n".join(grouped["web"]) if grouped["web"] else "- 해당 없음"
+    return (
+        "기관 보고서\n"
+        f"{institution_lines}\n\n"
+        "학술 논문\n"
+        f"{academic_lines}\n\n"
+        "웹페이지\n"
+        f"{web_lines}"
+    )
 
 
 def _build_summary(evaluations: list[dict[str, object]], domain_label: str) -> str:
     top = evaluations[0]
+    top_risks = ", ".join(_as_list(top.get("business_risks", []))[:3]) or "제조/인증/ROI 검증 리스크"
     return (
         "[SUMMARY]\n"
-        f"- 평가 개요: {domain_label} 스타트업 {len(evaluations)}개사를 7개 항목 Scorecard와 정성 분석으로 평가했다.\n"
-        "- 평가 기준: 팀, 시장, 기술력·양산, 경쟁 환경, 고객 ROI, 규제, 수익모델을 종합 반영했다.\n\n"
-        f"{_render_ranking_table(evaluations)}\n\n"
-        f"- 핵심 인사이트 1: {domain_label} 투자에서는 기술 성숙도와 양산 실행력이 최종 순위에 큰 영향을 준다.\n"
-        f"- 핵심 인사이트 2: 최고 점수 기업은 {top['startup_name']}이며 총점은 {float(top['final_score']):.2f}점이다.\n"
-        "- 핵심 인사이트 3: 총점이 유사한 기업은 경쟁 해자와 고객 ROI 검증 수준에서 우선순위가 갈린다."
+        f"- 평가 대상: {domain_label} 스타트업 {len(evaluations)}개사\n"
+        "- 평가 방법: 7개 항목 Scorecard + Hard Filter + 근거자료 기반 정성 분석\n"
+        f"- 최우선 후보: {top['startup_name']} (총점 {float(top['final_score']):.2f}, {top['decision_label']})\n"
+        f"- 핵심 투자포인트: {top.get('business_idea', '핵심 컨셉 정보 미기재')}\n"
+        f"- 핵심 리스크: {top_risks}\n"
+        "- 공통 한계: 공개자료 중심 분석으로 비공개 재무/실사 정보는 제한적으로 반영"
     )
 
 
 def _build_company_section(evaluation: dict[str, object], index: int) -> str:
-    prefix = f"2.{index}"
+    prefix = f"1.{index}"
     basic_info = evaluation.get("startup_basic_info", {})
     if not isinstance(basic_info, dict):
         basic_info = {}
@@ -269,33 +366,41 @@ def _build_company_section(evaluation: dict[str, object], index: int) -> str:
     tech_sources = evaluation.get("tech_research_sources", [])
     market_sources = evaluation.get("market_research_sources", [])
     competitor_closest = evaluation.get("competitor_closest", [])
+    business_risks = _as_list(evaluation.get("business_risks", []))
+    limitations = _as_list(evaluation.get("limitations", []))
     return (
         f"{prefix} [{evaluation['startup_name']}]\n"
         f"{prefix}.1 기업 개요\n{_format_basic_info(basic_info)}\n\n"
-        f"{prefix}.2 기술력 분석\n{evaluation.get('tech_summary', '미기재')}\n"
+        f"{prefix}.2 사업 아이디어(핵심 컨셉)\n{evaluation.get('business_idea', '미기재')}\n\n"
+        f"{prefix}.3 팀 구성(핵심 창업자/기술 역량)\n"
+        f"{_render_bullet_block('핵심 팀', _as_list(evaluation.get('team_composition', [])))}\n\n"
+        f"{prefix}.4 기술력 분석\n{evaluation.get('tech_summary', '미기재')}\n"
         f"- TRL 추정: {evaluation.get('tech_trl', '미기재')}\n"
         f"- 양산 준비도: {evaluation.get('tech_manufacturing_readiness', '미기재')}\n\n"
         f"{_render_bullet_block('핵심 포인트', evaluation.get('tech_key_points', []))}\n\n"
         f"{_render_bullet_block('주요 리스크', evaluation.get('tech_risks', []))}\n\n"
         f"{_render_bullet_block('추가 확인 필요', evaluation.get('tech_gaps', []))}\n\n"
         f"{_render_reference_block('기술 문서 근거', tech_sources)}\n\n"
-        f"{prefix}.3 시장성 분석\n{evaluation.get('market_evaluation', '미기재')}\n"
+        f"{prefix}.5 시장성 분석\n{evaluation.get('market_evaluation', '미기재')}\n"
         f"- 타깃 시장: {evaluation.get('market_target', '미기재')}\n"
         f"- 시장 성숙도: {evaluation.get('market_maturity', '미기재')}\n"
-        f"- 시장 추정 범위: {evaluation.get('market_estimate_range', '미기재')}\n\n"
+        f"- 시장 규모: {evaluation.get('market_estimate_range', '미기재')}\n\n"
         f"{_render_bullet_block('핵심 포인트', evaluation.get('market_key_points', []))}\n\n"
         f"{_render_bullet_block('주요 리스크', evaluation.get('market_risks', []))}\n\n"
         f"{_render_bullet_block('추가 확인 필요', evaluation.get('market_gaps', []))}\n\n"
         f"{_render_reference_block('시장 문서 근거', market_sources)}\n\n"
-        f"{prefix}.4 경쟁 환경\n{evaluation.get('competitor_analysis', '미기재')}\n"
+        f"{prefix}.6 경쟁 환경\n{evaluation.get('competitor_analysis', '미기재')}\n"
         f"- 근접 경쟁사: {', '.join(str(item) for item in competitor_closest) or '미기재'}\n\n"
         f"{_render_bullet_block('핵심 포인트', evaluation.get('competitor_key_points', []))}\n\n"
         f"{_render_bullet_block('주요 리스크', evaluation.get('competitor_risks', []))}\n\n"
         f"{_render_bullet_block('추가 확인 필요', evaluation.get('competitor_gaps', []))}\n\n"
-        f"{prefix}.5 고객 트랙션\n{traction}\n\n"
-        f"{prefix}.6 Scorecard 점수표\n{_render_scorecard_table(evaluation.get('scorecard', {}), float(evaluation.get('final_score', 0.0)))}\n\n"
-        f"{prefix}.7 Hard Filter 점검\n{_render_hard_filter_section(evaluation.get('hard_filter_results', {}))}\n\n"
-        f"{prefix}.8 투자 판단 및 근거\n"
+        f"{prefix}.7 사업 리스크(시장·기술·규제·경쟁)\n"
+        f"{_render_bullet_block('핵심 리스크', business_risks)}\n\n"
+        f"{prefix}.8 고객 트랙션\n{traction}\n\n"
+        f"{prefix}.9 한계점\n{_render_bullet_block('분석 한계', limitations)}\n\n"
+        f"{prefix}.10 Scorecard 점수표\n{_render_scorecard_table(evaluation.get('scorecard', {}), float(evaluation.get('final_score', 0.0)))}\n\n"
+        f"{prefix}.11 Hard Filter 점검\n{_render_hard_filter_section(evaluation.get('hard_filter_results', {}))}\n\n"
+        f"{prefix}.12 투자 판단 및 근거\n"
         f"- 투자 결론: {evaluation.get('investment_decision', 'hold')}\n"
         f"- 투자 판단(한글): {evaluation.get('decision_label', _decision_grade(float(evaluation.get('final_score', 0.0))))}\n"
         f"- 등급: {_decision_grade(float(evaluation.get('final_score', 0.0)))}\n"
@@ -304,7 +409,7 @@ def _build_company_section(evaluation: dict[str, object], index: int) -> str:
 
 
 def _build_company_sections(evaluations: list[dict[str, object]]) -> str:
-    sections: list[str] = ["2. 기업별 상세 분석"]
+    sections: list[str] = ["1. 기업별 상세 분석"]
     for index, evaluation in enumerate(evaluations, start=1):
         sections.append(_build_company_section(evaluation, index))
     return "\n\n".join(sections)
@@ -321,57 +426,56 @@ def build_report_content(all_evaluations: list[dict[str, object]], *, domain_lab
         for evaluation in evaluations
     )
     sections = [
-        "[표지]\n"
-        f"- 보고서명: {domain_label} 스타트업 투자 평가 보고서\n"
-        "- 팀원: " + ", ".join(TEAM_MEMBERS) + "\n"
-        f"- 평가 도메인: {domain_label}\n"
-        f"- 작성일: {REPORT_DATE.isoformat()}\n"
-        f"- 평가 기업 수: {len(evaluations)}",
         _build_summary(evaluations, domain_label),
         "────────────────────────────────────",
-        "1. 평가 개요\n"
-        "1.1 평가 목적 및 범위\n"
+        "0. 보고서 개요\n"
+        f"- 보고서명: {domain_label} 스타트업 투자 평가 보고서\n"
+        "- 작성자: " + ", ".join(TEAM_MEMBERS) + "\n"
+        f"- 작성일: {REPORT_DATE.isoformat()}\n"
+        f"- 평가 도메인: {domain_label}\n"
+        f"- 평가 기업 수: {len(evaluations)}\n\n"
+        "0.1 평가 목적 및 범위\n"
         f"- {domain_label} 스타트업의 투자 적합도를 기술, 시장, 경쟁, 사업성 관점에서 종합 평가한다.\n"
         "- 평가 결과는 다중 후보 간 상대 비교와 투자 우선순위 도출에 사용한다.\n"
         "- 보고서에는 투자 추천, 투자 보류, 저점 기업을 포함한 전체 평가 결과를 모두 포함한다.\n\n"
-        "1.2 평가 방법론\n"
+        "0.2 평가 방법론\n"
         "- Scorecard 7개 항목과 Hard Filter를 결합해 점수와 보류 여부를 판단한다.\n\n"
         f"{_render_weight_table()}\n\n"
-        "1.3 평가 대상 기업 목록\n"
+        "0.3 평가 대상 기업 목록\n"
         f"{_render_company_list(evaluations)}\n\n"
-        "1.4 전체 평가 현황\n"
+        "0.4 전체 평가 현황\n"
         f"{_render_decision_breakdown(evaluations)}",
         "────────────────────────────────────",
         _build_company_sections(evaluations),
         "────────────────────────────────────",
-        "3. 종합 비교 분석\n"
-        "3.1 항목별 비교표\n"
+        "2. 종합 비교 분석\n"
+        "2.1 항목별 비교표\n"
         f"{_render_comparison_table(evaluations)}\n\n"
-        "3.2 최종 순위 및 투자 추천 등급\n"
+        "2.2 최종 순위 및 투자 추천 등급\n"
         "- 투자 추천: 총점 3.5 이상\n"
         "- 관심 보류: 총점 2.5~3.4\n"
         "- 투자 제외: 총점 2.5 미만\n\n"
-        "3.3 투자 보류 및 저점 기업 목록\n"
+        "2.3 투자 보류 및 저점 기업 목록\n"
         f"{_render_hold_list(evaluations)}\n\n"
-        "3.4 항목별 강자 분석\n"
+        "2.4 항목별 강자 분석\n"
         f"{_render_strengths(evaluations)}",
         "────────────────────────────────────",
-        "4. 리스크 분석\n"
-        "4.1 공통 리스크\n"
+        "3. 리스크 분석\n"
+        "3.1 공통 리스크\n"
         "- 로보틱스 도메인은 인증 지연, 제조 원가, 공급망 불확실성, 현장 통합 난이도가 높다.\n"
         "- 고객 ROI 입증이 늦어지면 파일럿 장기화와 후속 투자 지연이 동시에 발생할 수 있다.\n\n"
-        "4.2 기업별 핵심 리스크 요약\n"
+        "3.2 기업별 핵심 리스크 요약\n"
         f"{company_risks}",
         "────────────────────────────────────",
-        "5. 투자 제언\n"
-        "5.1 1순위 투자 추천 기업 및 조건\n"
+        "4. 투자 제언\n"
+        "4.1 1순위 투자 추천 기업 및 조건\n"
         f"- 1순위 투자 추천 기업: {top['startup_name']}\n"
         f"- 추천 조건: {top.get('decision_reason', '추가 검토 필요')}\n\n"
-        "5.2 모니터링 지표 (KPI)\n"
+        "4.2 모니터링 지표 (KPI)\n"
         "- 파일럿 수와 유상 전환율\n"
         "- 양산 일정 준수율과 BOM 원가 개선 추이\n"
         "- 인증 획득 진행률과 고객 ROI 수치\n\n"
-        "5.3 추가 검토 사항 및 한계점\n"
+        "4.3 추가 검토 사항 및 한계점\n"
         "- 공개 자료 중심 평가라 비공개 재무, 계약, 제조 수율 정보는 제한적으로 반영되었을 수 있다.\n"
         "- 실제 투자 집행 전 고객 인터뷰, 제조 파트너 실사, 인증 문서 검증이 필요하다.",
         "────────────────────────────────────",
@@ -397,6 +501,12 @@ def _as_report_item(state: InvestmentState) -> dict[str, object]:
         "scorecard": state.get("scorecard", {}),
         "hard_filter_results": state.get("hard_filter_results", {}),
         "startup_basic_info": startup_basic_info,
+        "business_idea": _as_text(
+            startup_basic_info.get("core_concept")
+            or startup_basic_info.get("product_name")
+            or startup_basic_info.get("description")
+        ),
+        "team_composition": _as_list(startup_basic_info.get("team_members") or startup_basic_info.get("founders")),
         "tech_summary": _as_text(
             state.get("tech_summary") or tech_assessment.get("summary"),
         ),
@@ -421,6 +531,22 @@ def _as_report_item(state: InvestmentState) -> dict[str, object]:
         "competitor_key_points": _as_list(competitor_assessment.get("differentiation") or competitor_assessment.get("evidence")),
         "competitor_risks": _as_list(competitor_assessment.get("competitive_risks") or competitor_assessment.get("risks")),
         "competitor_gaps": _as_list(competitor_assessment.get("evidence_gaps")),
+        "business_risks": _as_list(
+            [
+                *_as_list(market_assessment.get("evidence_gaps")),
+                *_as_list(tech_assessment.get("risks")),
+                *_as_list(competitor_assessment.get("competitive_risks")),
+                *_as_list(state.get("safety_assessment", {}).get("compliance_risks")),
+            ]
+        ),
+        "limitations": _as_list(
+            [
+                *_as_list(tech_assessment.get("evidence_gaps")),
+                *_as_list(market_assessment.get("evidence_gaps")),
+                *_as_list(competitor_assessment.get("evidence_gaps")),
+                *_as_list(state.get("safety_assessment", {}).get("evidence_gaps")),
+            ]
+        ),
         "traction_summary": _as_text(
             startup_basic_info.get("traction")
             or roi_assessment.get("summary")

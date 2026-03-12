@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from langchain_community.retrievers import TavilySearchAPIRetriever
 
+from .market_vectorstore import load_or_build_vectorstore
 from .startup_search_agent import load_env_file
 
 
@@ -17,6 +18,8 @@ DEFAULT_RESEARCH_CACHE_DIR = Path(".cache/company_research")
 MAX_EXCERPT_CHARS = 2000
 MAX_TAVILY_RESULTS_PER_QUERY = 3
 MAX_MCP_RESULTS_PER_QUERY = 2
+FAISS_TECH_TOP_K = 6
+FAISS_MARKET_TOP_K = 6
 TECH_SEARCH_PATTERNS = (
     ("tech", "{name} robotics technology"),
     ("tech", "{name} humanoid robot"),
@@ -144,6 +147,58 @@ def tavily_tech_sources(candidate: dict[str, Any]) -> list[dict[str, Any]]:
                 )
             )
     return unique_by_url(sources)
+
+
+def _candidate_query(state: dict[str, Any], candidate: dict[str, Any], *, focus: str) -> str:
+    name = str(candidate.get("name", "")).strip()
+    sector = str(candidate.get("sector", "")).strip()
+    tags = " ".join(str(tag) for tag in (candidate.get("tags") or []) if str(tag).strip())
+    description = str(candidate.get("description", "")).strip()[:300]
+    user_query = str(state.get("user_query", "")).strip()
+    return " ".join(part for part in [name, sector, tags, description, focus, user_query] if part)
+
+
+def _local_pdf_snippets(
+    state: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    focus: str,
+    source_type: str,
+    top_k: int,
+) -> list[dict[str, Any]]:
+    vectorstore = load_or_build_vectorstore()
+    if vectorstore is None:
+        return []
+
+    query = _candidate_query(state, candidate, focus=focus)
+    docs = vectorstore.similarity_search(query, k=top_k)
+    snippets: list[dict[str, Any]] = []
+    for doc in docs:
+        source = str(doc.metadata.get("source", "")).strip() or "local_pdf"
+        page = doc.metadata.get("page", "")
+        page_suffix = f"#page={page}" if str(page).strip() else ""
+        source_url = f"{source}{page_suffix}"
+        source_name = Path(source).name or "local_pdf"
+        title = f"{source_name} p.{page}" if str(page).strip() else source_name
+        snippets.append(
+            snippet(
+                title=title,
+                url=source_url,
+                excerpt=str(doc.page_content or ""),
+                source_type=source_type,
+            )
+        )
+    return unique_by_url(snippets)
+
+
+def faiss_tech_sources(state: dict[str, Any], candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    return _local_pdf_snippets(
+        state,
+        candidate,
+        focus="technology TRL manufacturing architecture performance benchmark patent",
+        source_type="faiss_rag:tech",
+        top_k=FAISS_TECH_TOP_K,
+    )
 
 
 def brightdata_mcp_base_url() -> str:
@@ -279,6 +334,16 @@ def mcp_market_sources(candidate: dict[str, Any]) -> list[dict[str, Any]]:
                 )
             )
     return unique_by_url(sources)
+
+
+def faiss_market_sources(state: dict[str, Any], candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    return _local_pdf_snippets(
+        state,
+        candidate,
+        focus="market size TAM SAM SOM demand CAGR pricing customer ROI unit economics traction",
+        source_type="faiss_rag:market",
+        top_k=FAISS_MARKET_TOP_K,
+    )
 
 
 def merge_research_state(
