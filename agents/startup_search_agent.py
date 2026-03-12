@@ -17,6 +17,7 @@ from .state import InvestmentState
 
 DEFAULT_USER_AGENT = "Mozilla/5.0"
 DEFAULT_CACHE_DIR = Path(".cache/robotics-startup-search")
+MAX_EVALUATION_CANDIDATES = 5
 YC_ALGOLIA_APP_ID = "45BWZJ1SGC"
 YC_ALGOLIA_API_KEY = (
     "NzllNTY5MzJiZGM2OTY2ZTQwMDEzOTNhYWZiZGRjODlhYzVkNjBmOGRjNzJiMWM4"
@@ -437,23 +438,6 @@ def llm_relevance_filter(user_query: str, candidates: list[StartupCandidate], cl
     return [item["name"] for item in payload if item["relevance_label"] in {"relevant", "maybe"}]
 
 
-def build_search_state(user_query: str, candidates: list[StartupCandidate], client: OpenAI) -> dict[str, Any]:
-    response = client.responses.create(
-        model="gpt-4.1-mini",
-        input=[
-            {"role": "system", "content": load_prompt("startup_search_state.txt")},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {"user_query": user_query, "candidates": [candidate.to_dict() for candidate in candidates]},
-                    ensure_ascii=False,
-                ),
-            },
-        ],
-    )
-    return json.loads(response.output_text)
-
-
 def save_startup_search_corpus(candidates: list[StartupCandidate], *, cache_dir: Path = DEFAULT_CACHE_DIR) -> Path:
     documents = [
         {
@@ -498,33 +482,19 @@ def startup_search_node(state: InvestmentState) -> InvestmentState:
     raw_candidates = deduplicate_candidates([*yc_candidates, *innoforest_candidates])
     relevant_names = set(llm_relevance_filter(user_query, raw_candidates, client))
     filtered_candidates = [candidate for candidate in raw_candidates if candidate.name in relevant_names]
-    search_state = build_search_state(user_query, filtered_candidates, client)
+    if not filtered_candidates:
+        filtered_candidates = raw_candidates[:5]
+    filtered_candidates = filtered_candidates[:MAX_EVALUATION_CANDIDATES]
     corpus_path = save_startup_search_corpus(filtered_candidates)
-    candidate_map = {candidate.name: candidate.to_dict() for candidate in filtered_candidates}
-    normalized_startup_list = [
-        item["name"] if isinstance(item, dict) and "name" in item else str(item)
-        for item in search_state.get("startup_list", [])
-    ]
-    normalized_startup_list = [name for name in normalized_startup_list if name in candidate_map]
-    if not normalized_startup_list:
-        normalized_startup_list = [candidate.name for candidate in filtered_candidates]
-
-    startup_name = search_state.get("startup_name", "")
-    if isinstance(startup_name, dict):
-        startup_name = startup_name.get("name", "")
-    startup_name = str(startup_name)
-    if startup_name not in candidate_map:
-        startup_name = normalized_startup_list[0] if normalized_startup_list else ""
-
-    startup_basic_info = search_state.get("startup_basic_info", {})
-    if not isinstance(startup_basic_info, dict) or startup_basic_info.get("name") not in candidate_map:
-        startup_basic_info = candidate_map.get(startup_name, {"name": startup_name})
+    startup_list = [candidate.name for candidate in filtered_candidates]
+    startup_name = startup_list[0] if startup_list else ""
+    startup_basic_info = filtered_candidates[0].to_dict() if filtered_candidates else {"name": startup_name}
 
     return {
         "search_keywords": keywords,
         "startup_name": startup_name,
-        "startup_list": normalized_startup_list,
-        "evaluated_startups": search_state.get("evaluated_startups", []),
+        "startup_list": startup_list,
+        "evaluated_startups": [],
         "startup_basic_info": startup_basic_info,
         "startup_candidates": [candidate.to_dict() for candidate in filtered_candidates],
         "startup_search_summary": (
