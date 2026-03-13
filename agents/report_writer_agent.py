@@ -91,6 +91,13 @@ def _reference_payload(sources: list[dict[str, object]]) -> dict[str, list[str]]
     return buckets
 
 
+def _final_reference_payload(report_history: list[dict[str, object]]) -> dict[str, list[str]]:
+    all_sources: list[dict[str, object]] = []
+    for item in report_history:
+        all_sources.extend(item.get("references", []))
+    return _reference_payload(all_sources)
+
+
 def _scorecard_rows(scorecard: dict[str, float], final_score: float) -> list[dict[str, object]]:
     rows = []
     for key, label in SCORECARD_LABELS.items():
@@ -116,7 +123,6 @@ def _company_payload(item: dict[str, object]) -> dict[str, object]:
         "competitor_assessment": item.get("competitor_assessment", {}),
         "decision_reason": item.get("decision_reason", ""),
         "scorecard_rows": _scorecard_rows(item.get("scorecard", {}), float(item.get("final_score", 0.0) or 0.0)),
-        "references": _reference_payload(item.get("references", [])),
     }
 
 
@@ -154,6 +160,7 @@ def _generate_final_markdown(report_history: list[dict[str, object]]) -> str:
     client = build_openai_client()
     payload = {
         "companies": [_company_payload(item) for item in report_history],
+        "final_references": _final_reference_payload(report_history),
         "report_date": REPORT_DATE.isoformat(),
     }
     response = client.responses.create(

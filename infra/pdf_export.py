@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -59,6 +60,106 @@ blockquote {
 }
 """
 
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+
+def _strip_markdown_inline(text: str) -> str:
+    text = MARKDOWN_LINK_RE.sub(r"\1 (\2)", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    return text.strip()
+
+
+def _build_reportlab_pdf(output_path: Path, markdown: str) -> Path:
+    from reportlab.lib.colors import HexColor
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    doc = SimpleDocTemplate(
+        str(output_path),
+        pagesize=A4,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        topMargin=16 * mm,
+        bottomMargin=16 * mm,
+        title="Robotics Startup Investment Report",
+    )
+
+    styles = getSampleStyleSheet()
+    body = ParagraphStyle(
+        "BodyKorean",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=10.5,
+        leading=16,
+        textColor=HexColor("#1f2937"),
+        spaceAfter=6,
+    )
+    heading1 = ParagraphStyle(
+        "Heading1Korean",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=24,
+        textColor=HexColor("#111827"),
+        spaceBefore=12,
+        spaceAfter=10,
+    )
+    heading2 = ParagraphStyle(
+        "Heading2Korean",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=14,
+        leading=20,
+        textColor=HexColor("#1f2937"),
+        spaceBefore=10,
+        spaceAfter=8,
+    )
+    heading3 = ParagraphStyle(
+        "Heading3Korean",
+        parent=styles["Heading3"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=18,
+        textColor=HexColor("#1f2937"),
+        spaceBefore=8,
+        spaceAfter=6,
+    )
+
+    story = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if not line:
+            story.append(Spacer(1, 4))
+            continue
+        if "page-break" in line:
+            story.append(Spacer(1, 18))
+            continue
+        if line.startswith('<div class="cover-kicker">'):
+            kicker = re.sub(r"<[^>]+>", "", line)
+            story.append(Paragraph(_strip_markdown_inline(kicker), heading3))
+            continue
+        if line.startswith("# "):
+            story.append(Paragraph(_strip_markdown_inline(line[2:]), heading1))
+            continue
+        if line.startswith("## "):
+            story.append(Paragraph(_strip_markdown_inline(line[3:]), heading2))
+            continue
+        if line.startswith("### "):
+            story.append(Paragraph(_strip_markdown_inline(line[4:]), heading3))
+            continue
+        if line.startswith(("- ", "* ")):
+            story.append(Paragraph(f"&bull; {_strip_markdown_inline(line[2:])}", body))
+            continue
+        story.append(Paragraph(_strip_markdown_inline(line), body))
+
+    doc.build(story)
+    return output_path
+
 
 def build_combined_markdown(*, user_query: str, summary_content: str, report_history: list[dict[str, Any]]) -> str:
     parts = [
@@ -92,6 +193,16 @@ def build_combined_pdf(
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    md_to_pdf_path = shutil.which("md-to-pdf")
+    if not md_to_pdf_path:
+        try:
+            return _build_reportlab_pdf(output_path, markdown)
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "PDF 생성을 위해 `md-to-pdf` CLI 또는 `reportlab` 패키지가 필요합니다. "
+                "`pip install -r requirements.txt`를 먼저 실행하세요."
+            ) from exc
+
     with tempfile.TemporaryDirectory(prefix="investment-report-") as temp_dir_str:
         temp_dir = Path(temp_dir_str)
         md_path = temp_dir / "investment_report.md"
@@ -102,7 +213,7 @@ def build_combined_pdf(
 
         subprocess.run(
             [
-                "md-to-pdf",
+                md_to_pdf_path,
                 str(md_path),
                 "--stylesheet",
                 str(css_path),

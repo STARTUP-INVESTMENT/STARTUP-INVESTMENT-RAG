@@ -18,10 +18,14 @@ For each company, write:
 ### 한계점
 ### 투자 판단
 ### 스코어카드
-## REFERENCE
+
+After all company sections, write one final section only:
+# REFERENCE
 
 REFERENCE rules:
-- Only include sources actually used for that company.
+- Do not create a separate REFERENCE section for each company.
+- Use the aggregated final_references payload only once at the end of the full report.
+- Only include sources actually used across the report.
 - Group under:
   - 기관 보고서
   - 학술 논문
