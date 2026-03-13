@@ -6,8 +6,8 @@
 
 ## Overview
 
-- **Objective** : 로보틱스 스타트업의 기술력, 시장성, 경쟁 환경, 팀, 리스크를 기준으로 투자 적합성 분석 및 `투자 추천 / 관심 보류` 판단 자동 생성
-- **Method** : AI Agent + Agentic RAG
+- **Objective** : 로보틱스 스타트업의 기술력, 시장성, 경쟁 환경, 팀, 리스크를 기준으로 투자 적합성 분석 및 판단 자동 생성
+- **Method** : LangGraph 기반 Multi-Agent
 - **Tools** : FAISS Vector Search, Tavily Web Search
 
 ---
@@ -15,8 +15,8 @@
 ## Features
 
 - **스타트업 후보 탐색** : 사용자 쿼리 기반으로 Algolia API를 통해 Y Combinator 스타트업 후보군 수집
-- **Agentic RAG 기반 근거 수집** : 에이전트별 Tavily 웹 검색 + FAISS 벡터 스토어(로보틱스 산업 기술 및 시장 동향 보고서)를 병행해 평가 근거 수집
-- **스코어카드 기반 평가** : 로보틱스 전문 VC의 투자 평가 기준이 반영된 팀·기술·시장·경쟁·ROI·안전·수익모델 가중합산을 통한 평가 후 최종 투자 적합성 판단
+- **Agentic RAG 기반 근거 수집** : 에이전트별 Tavily 웹 검색 + FAISS 벡터 스토어(국제로봇연맹, 맥킨지 등 로보틱스 산업 기술 및 시장 동향 보고서)를 병행해 평가 근거 수집
+- **스코어카드 기반 평가** : 로보틱스 전문 벤처 캐피탈의 투자 평가 기준이 반영된 팀·기술·시장·경쟁·ROI·안전·수익모델 가중합산을 통한 평가 후 최종 투자 적합성 판단
 - **종합 투자 보고서 생성** : 스코어카드 평가 결과를 바탕으로 투자 의견, 핵심 근거(기술력, 시장성) 등 구조화된 투자 보고서 생성
 
 ---
@@ -78,7 +78,7 @@
 ```
 
 ## Contributors
-[수정 필요]
+
 - **배민** : LangGraph 파이프라인 설계, Startup Search Agent (YC·혁신의숲 크롤링, LLM 필터링)
 - **이성민** : FAISS 벡터 스토어 구축, 임베딩 모듈(multilingual-e5-large-instruct), RAG 파이프라인 연동
 - **임세하** : Market Evaluation Agent (시장·ROI·수익모델), Competitor Analysis Agent, 스코어카드 설계
