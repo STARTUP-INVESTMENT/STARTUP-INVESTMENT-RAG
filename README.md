@@ -79,7 +79,7 @@
 
 ## Contributors
 
-- **배민** : LangGraph 파이프라인 설계, Startup Search Agent (YC·혁신의숲 크롤링, LLM 필터링)
-- **이성민** : FAISS 벡터 스토어 구축, 임베딩 모듈(multilingual-e5-large-instruct), RAG 파이프라인 연동
-- **임세하** : Market Evaluation Agent (시장·ROI·수익모델), Competitor Analysis Agent, 스코어카드 설계
-- **정찬혁** : Tech Evaluation Agent (TRL·팀·안전규제), Investment Decision Agent, Report Writer (MD·PDF)
+- **배민** : LangGraph 파이프라인 설계, Startup Search Agent
+- **이성민** : FAISS 벡터 스토어 구축, 임베딩 모듈, RAG 파이프라인 연동
+- **임세하** : Market Evaluation Agent, Competitor Analysis Agent
+- **정찬혁** : Tech Evaluation Agent, Investment Decision Agent, Report Writer
