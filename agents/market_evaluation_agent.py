@@ -7,7 +7,7 @@ from core.prompt_loader import load_prompt
 from core.state import InvestmentState
 from infra.market_vectorstore import load_or_build_vectorstore, retrieve_relevant_context
 from infra.research_utils import save_research_cache, snippet, source_rows, summarize_research, tavily_search_results, unique_sources
-
+import time
 
 def _build_market_query(state: InvestmentState, candidate: dict[str, Any]) -> str:
     sector = candidate.get("sector", "")
@@ -56,6 +56,8 @@ def _tavily_market_sources(candidate: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def market_evaluation_node(state: InvestmentState) -> InvestmentState:
+    start = time.time()
+    print("Starting market evaluation...")
     candidate = current_candidate(state)
     startup_name = str(candidate.get("name", state.get("startup_name", "")))
     research_snippets = _tavily_market_sources(candidate)
@@ -110,6 +112,10 @@ def market_evaluation_node(state: InvestmentState) -> InvestmentState:
         f"ROI/트랙션: {roi_traction_assessment['summary']} "
         f"수익모델: {business_model_assessment['summary']}"
     )
+
+    end = time.time()
+    print(f"Market evaluation for {startup_name} completed in {end - start:.2f} seconds")
+
     return {
         "market_research_cache_path": str(research_cache_path),
         "market_research_summary": summarize_research(startup_name, "시장", research_snippets),

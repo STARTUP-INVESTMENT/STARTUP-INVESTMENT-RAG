@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlencode, urlparse, urlunparse
 from urllib.request import Request, urlopen
-
+import time
 from openai import OpenAI
 
 from core.prompt_loader import load_prompt
@@ -513,6 +513,8 @@ def _next_startup_name(state: InvestmentState) -> str:
 
 
 def startup_search_node(state: InvestmentState) -> InvestmentState:
+    start = time.time()
+    print("Starting startup search...")
     if state.get("startup_list"):
         startup_name = _next_startup_name(state)
         candidate_map = {candidate["name"]: candidate for candidate in state.get("startup_candidates", [])}
@@ -539,6 +541,8 @@ def startup_search_node(state: InvestmentState) -> InvestmentState:
     startup_name = startup_list[0] if startup_list else ""
     startup_basic_info = filtered_candidates[0].to_dict() if filtered_candidates else {"name": startup_name}
 
+    end = time.time()
+    print(f"Startup search completed in {end - start:.2f} seconds. Found {len(filtered_candidates)} candidates for query: {user_query}")
     return {
         "search_keywords": keywords,
         "startup_name": startup_name,

@@ -4,7 +4,7 @@ from core.agent_utils import current_candidate, json_response, string_list
 from core.prompt_loader import load_prompt
 from core.state import InvestmentState
 from infra.research_utils import save_research_cache, snippet, source_rows, summarize_research, tavily_search_results, unique_sources
-
+import time
 
 COMPETITOR_SEARCH_PATTERNS = (
     ("competition", "{name} robotics competitors"),
@@ -42,6 +42,8 @@ def _competitor_sources(candidate: dict[str, object]) -> list[dict[str, object]]
 
 
 def competitor_analysis_node(state: InvestmentState) -> InvestmentState:
+    start = time.time()
+    print(f"Starting competitor analysis for {state.get('startup_name', 'unknown startup')}")
     candidate = current_candidate(state)
     startup_name = str(candidate.get("name", state.get("startup_name", "")))
     research_snippets = _competitor_sources(candidate)
@@ -71,6 +73,9 @@ def competitor_analysis_node(state: InvestmentState) -> InvestmentState:
         f"근접 경쟁사: {', '.join(assessment['closest_competitors'][:3]) or 'insufficient_data'}. "
         f"차별화: {', '.join(assessment['differentiation'][:3]) or 'insufficient_data'}."
     )
+
+    end = time.time()
+    print(f"Competitor analysis for {startup_name} completed in {end - start:.2f} seconds")
     return {
         "competitor_research_cache_path": str(research_cache_path),
         "competitor_research_summary": summarize_research(startup_name, "경쟁", research_snippets),

@@ -46,7 +46,7 @@
 ---
 
 ## Architecture
-[이미지 첨부]
+![diagram](./docs/diagram.png)
 
 ## Directory Structure
 

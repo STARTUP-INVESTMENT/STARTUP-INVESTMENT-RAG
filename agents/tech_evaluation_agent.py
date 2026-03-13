@@ -5,6 +5,7 @@ from typing import Any
 from core.agent_utils import current_candidate, json_response, string_list
 from core.prompt_loader import load_prompt
 from core.state import InvestmentState
+import time
 from infra.market_vectorstore import load_or_build_vectorstore, retrieve_relevant_context
 from infra.research_utils import (
     save_research_cache,
@@ -97,7 +98,9 @@ def _technology_score(trl_level: int, manufacturing_readiness: str) -> float:
 
 
 def tech_evaluation_node(state: InvestmentState) -> InvestmentState:
-    candidate = current_candidate(state)
+    start = time.time()
+    print("Starting tech evaluation...")
+    candidate =current_candidate(state)
     startup_name = str(candidate.get("name", state.get("startup_name", "")))
     research_snippets = _tavily_tech_sources(candidate)
     research_cache_path = save_research_cache(startup_name, "tech_research", research_snippets)
@@ -152,6 +155,10 @@ def tech_evaluation_node(state: InvestmentState) -> InvestmentState:
         f"기술 평가: {tech_assessment['summary']} "
         f"안전/규제: {safety_assessment['summary']}"
     )
+
+    end = time.time()
+    print(f"Tech evaluation for {startup_name} completed in {end - start:.2f} seconds")
+
     return {
         "tech_research_cache_path": str(research_cache_path),
         "tech_research_summary": summarize_research(startup_name, "기술", research_snippets),

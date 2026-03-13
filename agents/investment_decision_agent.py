@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.state import InvestmentState
-
+import time
 
 INVESTMENT_THRESHOLD = 3.5
 SCORE_WEIGHTS = {
@@ -27,6 +27,8 @@ def _score(value: object, default: float = 2.5) -> float:
 
 
 def investment_decision_node(state: InvestmentState) -> InvestmentState:
+    start = time.time()
+    print(f"Starting investment decision for {state.get('startup_name', '')}...")
     team = state.get("team_assessment", {})
     market = state.get("market_assessment", {})
     tech = state.get("tech_assessment", {})
@@ -53,6 +55,10 @@ def investment_decision_node(state: InvestmentState) -> InvestmentState:
         f"안전/규제 {scorecard['safety_regulation']}, 수익모델 {scorecard['business_model']}를 반영했다. "
         f"기존 scorecard 가중치 기준으로 최종 판단은 {'투자 추천' if decision == 'invest' else '관심 보류'}다."
     )
+
+    end = time.time()
+    print(f"Investment decision for {state.get('startup_name', '')} completed in {end - start:.2f} seconds")
+    
     return {
         "scorecard": scorecard,
         "final_score": final_score,
